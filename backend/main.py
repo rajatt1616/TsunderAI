@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
 from pydantic import BaseModel
+from fastapi.staticfiles import StaticFiles 
 
 load_dotenv()
 
@@ -156,7 +157,7 @@ def build_llm() -> ChatGroq:
 
 @app.get("/api/health")
 def health_check():
-    return {"app": "Animated AI Waifu Simulator", "status": "online"}
+    return {"app": "Animated AI Waifu Simulator", "status": "online"}   
 
 
 @app.post("/reset")
@@ -245,7 +246,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         combo_active=combo_active,
     )
 
-    from fastapi.staticfiles import StaticFiles
+    
 
 # --- Place this at the very bottom of main.py ---
 app.mount("/", StaticFiles(directory="frontend", html=True), name="static")
