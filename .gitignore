@@ -1,0 +1,27 @@
+# Environment & Secret Files (Blocks API key leaks)
+.env
+*.env
+!.env.example
+
+# Python Virtual Environments (Blocks heavy packages)
+.venv/
+.venv-*/
+venv/
+env/
+frontend/.venv/
+
+# Python Cache & Bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# System & Editor Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temporary Files
+_user_pasted_files/
+*.log

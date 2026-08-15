@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>Animated AI Waifu Simulator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <main class="stage-panel" id="stage-panel">
+      <canvas id="live2d-canvas"></canvas>
+
+      <!-- Floating RPG action dock (quick slash-command shortcuts) -->
+      <div class="rpg-action-dock" id="rpg-action-dock">
+        <button type="button" class="dock-btn" data-cmd="/feed" title="Feed Yuki">
+          <span class="dock-icon">&#127858;</span>
+          <span class="dock-label">Feed</span>
+        </button>
+        <button type="button" class="dock-btn" data-cmd="/apologize" title="Beg for forgiveness">
+          <span class="dock-icon">&#128591;</span>
+          <span class="dock-label">Apologize</span>
+        </button>
+        <button type="button" class="dock-btn" data-cmd="/headpat" title="Give her a headpat">
+          <span class="dock-icon">&#129483;</span>
+          <span class="dock-label">Headpat</span>
+        </button>
+        <button type="button" class="dock-btn" data-cmd="/dance" title="Force her to dance">
+          <span class="dock-icon">&#127925;</span>
+          <span class="dock-label">Dance</span>
+        </button>
+      </div>
+
+      <!-- Floating compact HUD pill: hearts, hunger, money, timer -->
+      <div class="hud-pill">
+        <div class="speedrun-timer">&#9203; <span id="game-timer">00:00.0</span></div>
+        <div class="heart-badge">
+          <span class="heart-icon">&#128150;</span>
+          <span class="heart-count" id="hud-score">20</span>
+          <span class="heart-max">/100</span>
+        </div>
+        <div class="hud-divider"></div>
+        <span class="status-chip" id="status-chip" title="Yuki's mood — her hunger is tracked invisibly, check /stats">&#128545; COLD</span>
+        <div class="hud-divider"></div>
+        <div class="meter-section">
+          <div class="meter-header">
+            <span class="tier-badge" id="hud-tier">COLD</span>
+            <span class="speed-info" id="hud-delta">+0 &#10084;</span>
+          </div>
+          <div class="meter-track">
+            <div class="meter-fill" id="hud-bar" style="width: 20%;"></div>
+          </div>
+        </div>
+        <div class="hud-divider"></div>
+        <div class="hud-money" id="hud-money" title="Fake gacha money earned from hearts">&#128176; <span id="gacha-money">$0</span></div>
+        <div class="hud-divider"></div>
+        <span class="status-badge" id="status-badge">offline</span>
+      </div>
+
+      <!-- Room background switcher -->
+      <div class="room-switcher" id="room-switcher">
+        <button type="button" class="room-trigger" id="room-trigger">
+          <span class="room-trigger-icon">&#127968;</span>
+          <span class="room-trigger-label" id="room-current">Default</span>
+          <span class="room-caret">&#9662;</span>
+        </button>
+        <div class="room-menu" id="room-menu" hidden></div>
+      </div>
+
+      <div id="popup-container"></div>
+      <div id="gacha-toast-container"></div>
+
+      <div class="victory-modal" id="victory-modal">
+        <div class="victory-card">
+          <div class="victory-heart">&#128150;</div>
+          <h2>100 HEARTS!</h2>
+          <p class="victory-sub">Yuki has finally warmed up to you.</p>
+          <p class="victory-stats">Final Time <strong id="victory-time">00:00.0</strong></p>
+          <p class="victory-stats">Turns <strong id="victory-turns">0</strong></p>
+          <button class="victory-close" id="victory-close" type="button">Continue</button>
+        </div>
+      </div>
+      <div class="dialogue-box">
+        <span class="speaker-badge" id="dialogue-speaker">Yuki</span>
+        <div class="speaker-row">
+          <span class="eq-pill" id="eq-pill"><span></span><span></span><span></span></span>
+          <span class="typing-dots" id="typing-dots"><span></span><span></span><span></span></span>
+        </div>
+        <p class="dialogue-text" id="dialogue-text">...Hmph. You're finally here. Don't keep me waiting like that, idiot.</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- Floating VN-style input bar (bottom center) -->
+  <form class="vn-input-container" id="chat-form" autocomplete="off">
+    <div class="cmd-autocomplete" id="cmd-autocomplete" hidden></div>
+    <input id="chat-field" type="text" placeholder="Talk to Yuki..." aria-label="Message" />
+    <button id="send-btn" type="submit" aria-label="Send">&#9654;</button>
+  </form>
+
+  <!-- Conversation log: hidden during gameplay, opened via the log button -->
+  <button class="backlog-toggle" id="backlog-toggle" type="button" title="Open the conversation log" aria-label="Conversation log">&#128220;</button>
+  <div class="backlog-modal" id="backlog-modal">
+    <div class="backlog-panel">
+      <header class="backlog-header">
+        <span>&#128220; Conversation Log</span>
+        <button class="backlog-close" id="backlog-close" type="button" aria-label="Close log">&#10005;</button>
+      </header>
+      <div class="chat-log" id="chat-log"></div>
+    </div>
+  </div>
+
+  <!-- 1. Live2D Cubism 2 Core (Resolves the missing live2d.min.js error) -->
+<script src="https://cdn.jsdelivr.net/gh/dylanNew/live2d/webgl/Live2D/lib/live2d.min.js"></script>
+
+<!-- 2. Live2D Cubism 4 Core -->
+<script src="vendor/live2dcubismcore.min.js"></script>
+
+<!-- 3. PixiJS v6 -->
+<script src="https://pixijs.download/v6.5.8/pixi.min.js"></script>
+
+<!-- 4. Pixi Live2D Display Universal Bundle -->
+<script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display/dist/index.min.js"></script>
+
+<!-- 5. TTS + Lip-Sync Engine (Kokoro local TTS + analyser, browser TTS fallback) -->
+<script src="tts.js"></script>
+
+<!-- 5b. Kokoro TTS library, loaded as a static module (avoids the dynamic import() that
+        browser extensions like coupon helpers hijack) -->
+<script type="module">
+  import { KokoroTTS } from 'https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js';
+  window.KokoroTTS = KokoroTTS;
+  if (typeof window.__kokoroLibResolve === 'function') window.__kokoroLibResolve();
+</script>
+
+<!-- 6. Your Main Application Logic -->
+<script src="app.js"></script>
+</body>
+</html>

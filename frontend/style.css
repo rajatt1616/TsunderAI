@@ -1,0 +1,2007 @@
+@import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700;800&display=swap');
+
+:root {
+  --bg-0: #0a0c12;
+  --bg-1: #0f1219;
+  --bg-2: #151a24;
+  --bg-3: #1b2130;
+  --border: #262e40;
+  --text-0: #e9edf6;
+  --text-1: #a3adc3;
+  --text-2: #6b768c;
+  --accent: #6c7bff;
+  --accent-soft: rgba(108, 123, 255, 0.16);
+  --pink: #ff6b9d;
+  --success: #34d399;
+  --danger: #ff4d6d;
+  --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font);
+  color: var(--text-0);
+  background-color: #050811;
+  min-height: 100vh;
+  overflow-x: hidden;
+  /* Make body a stacking context so the z-index:-1 ::before layer paints
+     ABOVE body's own background instead of being hidden behind it. */
+  position: relative;
+  z-index: 0;
+}
+
+/* Background gradient layer */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  transition: background 1.2s ease-in-out;
+  background: radial-gradient(circle at center, #1e3056 0%, #0b1126 100%); /* Default Cold */
+}
+
+/* Dynamic Mood Classes */
+body.mood-meltdown::before {
+  background: radial-gradient(circle at center, #a4122f 0%, #1d0408 100%);
+}
+
+body.mood-cold::before {
+  background: radial-gradient(circle at center, #1e3056 0%, #0b1126 100%);
+}
+
+body.mood-warm::before {
+  background: radial-gradient(circle at center, #6e1f62 0%, #170820 100%);
+}
+
+body.mood-max::before {
+  background: radial-gradient(circle at center, #9c2a4d 0%, #23081c 100%);
+}
+
+/* Room scene wallpaper (set by the /room command). The radial vignette sits on
+   top of the image so the Live2D model and dialogue box stay crisp. Declared
+   after the mood classes so it wins when both are present. */
+body.room-scene::before {
+  background:
+    radial-gradient(ellipse at center, rgba(5, 8, 17, 0) 35%, rgba(5, 8, 17, 0.45) 70%, rgba(5, 8, 17, 0.82) 100%),
+    var(--room-scene, #050811) center / cover no-repeat,
+    #050811;
+  /* Depth of field + lighting blend: blur softens the sharp scene so Yuki pops,
+     brightness dims the warm highlights to match her lighting, and scale(1.05)
+     hides the blurry white edges at the viewport borders. */
+  filter: blur(3px) brightness(0.85);
+  transform: scale(1.05);
+}
+
+/* ---- Room background switcher (top-right of stage) ---- */
+.room-switcher {
+  position: absolute;
+  top: 18px;
+  right: 70px;
+  z-index: 110;
+}
+
+.room-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-family: 'M PLUS Rounded 1c', var(--font);
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: #f8fafc;
+  background: rgba(14, 11, 26, 0.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 126, 179, 0.35);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.2s ease, transform 0.15s ease;
+}
+
+.room-trigger:hover,
+.room-trigger.open {
+  border-color: #ff7eb3;
+  transform: translateY(-1px);
+}
+
+.room-caret {
+  font-size: 0.7rem;
+  color: rgba(248, 250, 252, 0.6);
+  transition: transform 0.2s ease;
+}
+
+.room-trigger.open .room-caret {
+  transform: rotate(180deg);
+}
+
+.room-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 210px;
+  padding: 6px;
+  background: rgba(14, 11, 26, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 126, 179, 0.3);
+  border-radius: 14px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 120;
+}
+
+.room-menu[hidden] {
+  display: none;
+}
+
+.room-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-align: left;
+  font-family: 'M PLUS Rounded 1c', var(--font);
+  color: #f8fafc;
+  font-weight: 700;
+  font-size: 0.82rem;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.room-option:hover {
+  background: rgba(255, 126, 179, 0.12);
+}
+
+.room-option.active {
+  background: rgba(255, 126, 179, 0.2);
+  border-color: rgba(255, 126, 179, 0.5);
+}
+
+.room-thumb {
+  width: 44px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--thumb, linear-gradient(135deg, #2a3456, #181c33)) center / cover no-repeat;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  flex: 0 0 auto;
+}
+
+body.light-mode .room-trigger,
+body.light-mode .room-menu {
+  background: rgba(248, 250, 252, 0.92);
+  border-color: rgba(214, 58, 82, 0.35);
+}
+
+body.light-mode .room-trigger,
+body.light-mode .room-option {
+  color: #1f2733;
+}
+
+body.light-mode .room-option:hover {
+  background: rgba(214, 58, 82, 0.1);
+}
+
+body.light-mode .room-option.active {
+  background: rgba(214, 58, 82, 0.18);
+  border-color: rgba(214, 58, 82, 0.5);
+}
+
+body.light-mode .room-caret {
+  color: #64748b;
+}
+
+/* Outdoor floor contact shadow under Yuki's feet (room scenes only). Bright
+   overhead sunlight in e.g. the rooftop scene needs a crisp drop shadow to
+   anchor her to the deck floor. */
+body.room-scene .stage-panel::after {
+  content: '';
+  position: absolute;
+  bottom: 1%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 150px;
+  height: 14px;
+  background: radial-gradient(ellipse at center, rgba(10, 13, 20, 0.6) 0%, transparent 80%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Top-of-screen scrim: dark fade so the floating HUD stays readable over bright
+   room skies (e.g. the rooftop). Sits above the background + canvas but below
+   the HUD pills, and can't block clicks. */
+body::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 120px;
+  background: linear-gradient(180deg, rgba(10, 13, 20, 0.6) 0%, transparent 100%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 1fr;
+  height: 100vh;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* ---- Stage / hero panel ---- */
+.stage-panel {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+#live2d-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.dialogue-box {
+  position: absolute;
+  left: 50%;
+  bottom: 86px;
+  transform: translateX(-50%);
+  width: min(620px, 84%);
+  padding: 26px 18px 15px;
+  font-family: 'M PLUS Rounded 1c', var(--font);
+  background: linear-gradient(135deg, rgba(15, 20, 32, 0.95), rgba(28, 18, 38, 0.95));
+  border: 2px solid #ff7eb3;
+  border-radius: 12px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 0 15px rgba(255, 126, 179, 0.3), inset 0 0 10px rgba(255, 126, 179, 0.1);
+}
+
+/* Bouncing visual-novel advance arrow */
+.dialogue-box::after {
+  content: '▼';
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  color: #ff7eb3;
+  font-size: 0.9rem;
+  pointer-events: none;
+  animation: bounceVn 0.8s infinite alternate;
+}
+
+@keyframes bounceVn {
+  from { transform: translateY(0); }
+  to { transform: translateY(4px); }
+}
+
+/* Speech-bubble pointer tail anchored toward the model */
+.dialogue-box::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -10px;
+  transform: translateX(-50%);
+  border-width: 0 10px 10px 10px;
+  border-style: solid;
+  border-color: transparent transparent rgba(15, 20, 32, 0.95) transparent;
+}
+
+/* ---- Floating VN input bar (bottom center) ---- */
+.vn-input-container {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(92%, 620px);
+  display: flex;
+  gap: 8px;
+  z-index: 120;
+}
+
+.vn-input-container input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 126, 179, 0.35);
+  background: rgba(14, 11, 26, 0.78);
+  color: #f8fafc;
+  font-family: 'M PLUS Rounded 1c', var(--font);
+  font-size: 0.95rem;
+  outline: none;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.vn-input-container input::placeholder {
+  color: rgba(248, 250, 252, 0.45);
+}
+
+.vn-input-container input:focus {
+  border-color: #ff7eb3;
+  box-shadow: 0 0 0 3px rgba(255, 126, 179, 0.18), 0 8px 30px rgba(0, 0, 0, 0.55);
+}
+
+.vn-input-container button {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 126, 179, 0.45);
+  background: linear-gradient(180deg, #ff7eb3, #ff5a8f);
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(255, 90, 143, 0.35);
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+
+.vn-input-container button:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.vn-input-container button:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.vn-input-container button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---- Conversation log button + modal ---- */
+.backlog-toggle {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 115;
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 126, 179, 0.35);
+  background: rgba(14, 11, 26, 0.72);
+  color: #f8fafc;
+  font-size: 1.1rem;
+  cursor: pointer;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition: border-color 0.2s ease, transform 0.15s ease;
+}
+
+.backlog-toggle:hover {
+  border-color: #ff7eb3;
+  transform: translateY(-1px);
+}
+
+.backlog-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.backlog-modal.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.backlog-panel {
+  width: min(92%, 560px);
+  max-height: 72vh;
+  max-height: 72dvh;
+  display: flex;
+  flex-direction: column;
+  background: rgba(14, 11, 26, 0.94);
+  border: 1px solid rgba(255, 126, 179, 0.3);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.backlog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  font-family: 'M PLUS Rounded 1c', var(--font);
+  font-weight: 800;
+  color: #f8fafc;
+}
+
+.backlog-close {
+  background: none;
+  border: none;
+  color: #a3adc3;
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.backlog-close:hover {
+  color: #ff7eb3;
+}
+
+.backlog-modal .chat-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+}
+
+.speaker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+/* Pinned speaker badge overlapping the top-left edge of the box */
+.speaker-badge {
+  position: absolute;
+  top: -14px;
+  left: 20px;
+  z-index: 2;
+  background: linear-gradient(135deg, #ff7eb3, #7952b3);
+  color: #ffffff;
+  font-family: 'M PLUS Rounded 1c', var(--font);
+  font-weight: 800;
+  font-size: 0.78rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 4px 14px;
+  border-radius: 20px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+}
+
+/* ---- Speaker equalizer pill: animated bars while talking ---- */
+.eq-pill {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+  opacity: 0.35;
+  transition: opacity 0.2s ease;
+}
+
+.dialogue-box.speaking .eq-pill {
+  opacity: 1;
+}
+
+.eq-pill span {
+  display: block;
+  width: 3px;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #ff7eb3, #6c7bff);
+  animation: eqBar 0.9s ease-in-out infinite;
+}
+
+.eq-pill span:nth-child(1) { animation-delay: 0s; }
+.eq-pill span:nth-child(2) { animation-delay: 0.2s; }
+.eq-pill span:nth-child(3) { animation-delay: 0.4s; }
+
+.dialogue-box:not(.speaking) .eq-pill span {
+  animation-play-state: paused;
+  height: 4px;
+}
+
+@keyframes eqBar {
+  0%, 100% { height: 4px; }
+  50% { height: 12px; }
+}
+
+/* ---- Typing indicator: bouncing dots while she's thinking/generating ---- */
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  display: none;
+}
+
+.dialogue-box.typing .typing-dots {
+  display: inline-flex;
+}
+
+.typing-dots span {
+  display: block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #ff7eb3;
+  animation: bounceDot 1.2s ease-in-out infinite;
+}
+
+.typing-dots span:nth-child(1) { animation-delay: 0s; }
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes bounceDot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+  30% { transform: translateY(-5px); opacity: 1; }
+}
+
+.dialogue-text {
+  font-family: 'M PLUS Rounded 1c', var(--font);
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--text-0);
+  min-height: 50px;
+}
+
+/* ---- Floating RPG action dock (left side of stage) ---- */
+.rpg-action-dock {
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  z-index: 100;
+}
+
+.rpg-action-dock .dock-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px 12px 14px;
+  border-radius: 16px;
+  color: #fff;
+  font-family: 'M PLUS Rounded 1c', var(--font);
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  border: 1px solid rgba(255, 126, 179, 0.3);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0) 45%),
+    rgba(18, 24, 38, 0.85);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 4px 15px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  overflow: hidden;
+  transition: transform 0.2s cubic-bezier(0.18, 0.89, 0.32, 1.28), box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+/* Glossy top shine sweep */
+.rpg-action-dock .dock-btn::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -80%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.25), transparent);
+  transform: skewX(-20deg);
+  transition: left 0.45s ease;
+}
+
+.rpg-action-dock .dock-btn:hover::after {
+  left: 130%;
+}
+
+.rpg-action-dock .dock-btn:hover {
+  transform: translateX(8px) scale(1.05);
+  border-color: #ff7eb3;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 0 20px rgba(255, 126, 179, 0.4);
+  animation: dockGlow 1.6s ease-in-out infinite;
+}
+
+.rpg-action-dock .dock-btn:active {
+  transform: scale(0.96) translateX(8px);
+  box-shadow:
+    inset 0 2px 8px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    0 0 12px rgba(255, 126, 179, 0.25);
+}
+
+@keyframes dockGlow {
+  0%, 100% { border-color: #ff7eb3; }
+  50% { border-color: #6c7bff; }
+}
+
+/* Flash feedback when a dock action is fired (click or hotkey) */
+.rpg-action-dock .dock-btn.dock-hit {
+  animation: dockHit 0.35s ease;
+}
+
+@keyframes dockHit {
+  0% { transform: scale(1); }
+  40% { transform: scale(0.9); box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.6), 0 0 24px rgba(255, 126, 179, 0.8); }
+  100% { transform: scale(1); }
+}
+
+/* Game-style cooldown: button dims and a wedge sweeps around to drain */
+.rpg-action-dock .dock-btn.on-cooldown {
+  cursor: not-allowed;
+  filter: grayscale(0.55) brightness(0.7) saturate(0.8);
+  transform: none;
+  animation: none;
+}
+
+.rpg-action-dock .dock-btn.on-cooldown::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: conic-gradient(
+    from 0deg,
+    rgba(255, 126, 179, 0.5) 0deg,
+    rgba(108, 123, 255, 0.35) 40deg,
+    transparent 60deg
+  );
+  animation: cooldownSweep 1.2s linear forwards;
+  pointer-events: none;
+}
+
+@keyframes cooldownSweep {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.rpg-action-dock .dock-btn.on-cooldown .dock-icon,
+.rpg-action-dock .dock-btn.on-cooldown .dock-label {
+  opacity: 0.55;
+}
+
+/* Disabled state while Kokoro TTS / speech is active (voice-overlap lock) */
+.rpg-action-dock .dock-btn:disabled,
+.rpg-action-dock .dock-btn.btn-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+  border-color: rgba(255, 255, 255, 0.1);
+  animation: none;
+}
+
+.rpg-action-dock .dock-btn:disabled .dock-icon,
+.rpg-action-dock .dock-btn:disabled .dock-label,
+.rpg-action-dock .dock-btn.btn-disabled .dock-icon,
+.rpg-action-dock .dock-btn.btn-disabled .dock-label {
+  opacity: 0.6;
+}
+
+/* Per-action tinted gradient so each button reads as a distinct skill */
+.rpg-action-dock .dock-btn:nth-child(1) {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(135deg, rgba(46, 213, 115, 0.28), rgba(24, 40, 34, 0.94));
+}
+.rpg-action-dock .dock-btn:nth-child(2) {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(135deg, rgba(255, 126, 179, 0.30), rgba(46, 24, 40, 0.94));
+}
+.rpg-action-dock .dock-btn:nth-child(3) {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(135deg, rgba(108, 123, 255, 0.30), rgba(26, 28, 50, 0.94));
+}
+.rpg-action-dock .dock-btn:nth-child(4) {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(135deg, rgba(255, 209, 102, 0.28), rgba(42, 34, 20, 0.94));
+}
+
+.dock-icon {
+  font-size: 20px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
+}
+
+.dock-label {
+  text-shadow: 0 2px 3px rgba(0, 0, 0, 0.6);
+}
+
+/* ---- Arcade combo multiplier overlay ---- */
+#combo-display {
+  position: fixed;
+  top: 24%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: 'M PLUS Rounded 1c', var(--font);
+  font-weight: 800;
+  color: #ffd166;
+  text-shadow: 0 0 20px rgba(255, 209, 102, 0.9), 0 4px 8px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  z-index: 10001;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+#combo-display.combo-active {
+  opacity: 1;
+  animation: comboPop 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes comboPop {
+  0% { transform: translate(-50%, -50%) scale(0.5); }
+  60% { transform: translate(-50%, -50%) scale(1.25); }
+  100% { transform: translate(-50%, -50%) scale(1); }
+}
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 15, 30, 0.4);
+}
+
+.chat-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.chat-title h1 {
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.chat-title p {
+  font-size: 11px;
+  color: var(--text-2);
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+/* Compact status/HUD strip under the chat title */
+
+.chat-logo {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--accent), var(--pink));
+  color: #fff;
+  font-size: 18px;
+  box-shadow: 0 6px 18px rgba(108, 123, 255, 0.35);
+}
+
+.chat-title h1 {
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.chat-title p {
+  font-size: 11px;
+  color: var(--text-2);
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+.status-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-1);
+  background: var(--bg-3);
+}
+
+.status-badge::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-2);
+}
+
+.status-badge.online {
+  color: var(--success);
+  border-color: rgba(52, 211, 153, 0.35);
+}
+
+.status-badge.online::before {
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+}
+
+.status-badge.offline {
+  color: var(--danger);
+  border-color: rgba(255, 77, 109, 0.35);
+}
+
+.status-badge.offline::before {
+  background: var(--danger);
+  box-shadow: 0 0 8px var(--danger);
+}
+
+.action-btn {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-3);
+  color: var(--text-1);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.1s ease, background 0.15s ease;
+}
+
+.action-btn:hover {
+  filter: brightness(1.12);
+}
+
+.action-btn:active {
+  transform: translateY(1px);
+}
+
+#mute-scream-overlay {
+  position: absolute;
+  top: 30%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #ff4757;
+  font-size: 2.5rem;
+  font-weight: 900;
+  text-shadow: 0 0 20px rgba(255, 71, 87, 0.9), 0 0 10px white;
+  pointer-events: none;
+  z-index: 999;
+  animation: pulseScream 0.2s infinite alternate;
+  text-align: center;
+  white-space: nowrap;
+}
+
+@keyframes pulseScream {
+  from { transform: translate(-50%, -50%) scale(1); }
+  to { transform: translate(-50%, -50%) scale(1.1); }
+}
+
+body.light-mode .action-btn {
+  background: var(--bg-3);
+  color: var(--text-1);
+}
+
+body.light-mode .panic-btn {
+  background: rgba(255, 71, 87, 0.1);
+  color: #d63a52;
+}
+
+/* Floating compact HUD pill (top-center of stage) */
+.hud-pill {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 18px;
+  background: rgba(14, 11, 26, 0.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 22px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+  z-index: 100;
+  max-width: calc(100% - 32px);
+}
+
+.hud-divider {
+  width: 1px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.hud-pill .meter-section {
+  flex: 1 1 120px;
+  min-width: 110px;
+}
+
+.hud-pill .heart-badge {
+  flex: 0 0 auto;
+}
+
+.hud-pill .hud-money {
+  flex: 0 0 auto;
+}
+
+body.light-mode .hud-pill {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(20, 25, 45, 0.15);
+}
+
+body.light-mode .hud-divider {
+  background: rgba(20, 25, 45, 0.15);
+}
+
+.chat-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px 18px 24px;
+  scroll-behavior: smooth;
+}
+
+.chat-log::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-log::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-log::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #ff7eb3, #6c7bff);
+  border-radius: 4px;
+}
+
+.chat-log::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #ff95c4, #8a96ff);
+}
+
+.chat-log {
+  scrollbar-width: thin;
+  scrollbar-color: #ff7eb3 transparent;
+}
+
+/* ChatGPT-style bubbles: user right-aligned, assistant left-aligned */
+.bubble {
+  max-width: 88%;
+  display: flex;
+}
+
+.bubble.user {
+  align-self: flex-end;
+  justify-content: flex-end;
+}
+
+.bubble.waifu {
+  align-self: flex-start;
+  justify-content: flex-start;
+}
+
+.bubble-content {
+  padding: 10px 16px;
+  font-size: 14px;
+  line-height: 1.55;
+  border-radius: 18px;
+  word-break: break-word;
+}
+
+.bubble.user .bubble-content {
+  background: linear-gradient(135deg, var(--accent), #5364ff);
+  color: #fff;
+  border-bottom-right-radius: 6px;
+  box-shadow: 0 4px 14px rgba(91, 108, 255, 0.25);
+}
+
+.bubble.waifu .bubble-content {
+  background: var(--bg-3);
+  color: var(--text-0);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 6px;
+}
+
+/* System & Help Messages */
+.chat-message.system-msg {
+  align-self: stretch;
+  max-width: 100%;
+  background: rgba(255, 105, 180, 0.08);
+  border: 1px dashed rgba(255, 105, 180, 0.3);
+  color: #e0e0e0;
+  font-size: 0.85rem;
+  padding: 10px 14px;
+  border-radius: 10px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.chat-message.system-msg code {
+  background: rgba(255, 105, 180, 0.25);
+  color: #ff7eb3;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-weight: 700;
+}
+
+/* Counter chip for collapsed duplicate system alerts */
+.msg-count {
+  color: #ff7eb3;
+  font-weight: 800;
+  margin-left: 2px;
+}
+
+body.light-mode .chat-message.system-msg {
+  background: rgba(255, 105, 180, 0.08);
+  border-color: rgba(255, 105, 180, 0.4);
+  color: var(--text-1);
+}
+
+.chat-input {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--bg-0);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.chat-input:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft), 0 0 15px rgba(255, 126, 179, 0.4);
+}
+
+.chat-input input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-0);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+}
+
+.chat-input input::placeholder {
+  color: var(--text-2);
+}
+
+.chat-input button {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), #5364ff);
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.1s ease;
+}
+
+.chat-input button:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.chat-input button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.chat-input button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.composer-wrap {
+  position: relative;
+  padding: 10px 16px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 15, 30, 0.4);
+}
+
+.composer-hint {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.composer-hint code {
+  background: rgba(255, 105, 180, 0.2);
+  color: #ff7eb3;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-family: monospace;
+  font-weight: 700;
+}
+
+/* Floating command auto-complete popover (shows when typing "/") */
+#cmd-autocomplete {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 500px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: rgba(15, 18, 28, 0.96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 126, 179, 0.3);
+  border-radius: 14px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 9999;
+  box-shadow: 0 -10px 25px rgba(0, 0, 0, 0.6);
+  box-sizing: border-box;
+}
+
+#cmd-autocomplete[hidden] {
+  display: none;
+}
+
+#cmd-autocomplete::-webkit-scrollbar {
+  width: 5px;
+}
+
+#cmd-autocomplete::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#cmd-autocomplete::-webkit-scrollbar-thumb {
+  background: rgba(255, 126, 179, 0.4);
+  border-radius: 4px;
+}
+
+/* Individual command row (hard reset against any inherited button styling) */
+.cmd-row {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+  height: auto !important;
+  min-height: 38px !important;
+  padding: 6px 12px !important;
+  border: none !important;
+  border-radius: 8px !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  color: #f8fafc !important;
+  font-family: inherit !important;
+  font-size: 0.85rem !important;
+  cursor: pointer;
+  box-sizing: border-box !important;
+  transition: background 0.15s ease;
+}
+
+.cmd-row:hover,
+.cmd-row.active {
+  background: rgba(255, 126, 179, 0.2) !important;
+}
+
+/* Command tag label (rectangular chip) */
+.cmd-tag {
+  background: #ff7eb3 !important;
+  color: #121622 !important;
+  font-weight: 800 !important;
+  font-size: 0.78rem !important;
+  padding: 3px 10px !important;
+  border-radius: 6px !important;
+  width: auto !important;
+  height: auto !important;
+  white-space: nowrap !important;
+}
+
+/* Description text (ellipsis instead of wrapping/crunching) */
+.cmd-text {
+  color: #cbd5e1 !important;
+  font-size: 0.8rem !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  margin-left: 12px !important;
+  text-align: right !important;
+}
+
+body.light-mode #cmd-autocomplete {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(20, 25, 45, 0.15);
+}
+
+body.light-mode .cmd-tag {
+  color: #fff;
+}
+
+body.light-mode .composer-hint code {
+  color: #d63a52;
+  background: rgba(255, 105, 180, 0.15);
+}
+
+/* Center HUD at top of stage */
+.speedrun-timer {
+  font-family: 'Courier New', monospace;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #ffd166;
+  letter-spacing: 1px;
+  padding: 5px 10px;
+  border-radius: 12px;
+  background: rgba(255, 209, 102, 0.1);
+  border: 1px solid rgba(255, 209, 102, 0.35);
+  white-space: nowrap;
+}
+
+.speedrun-timer span {
+  color: #fff3c4;
+}
+
+.heart-badge {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  background: rgba(255, 105, 180, 0.15);
+  padding: 6px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 120, 180, 0.4);
+}
+
+.heart-icon {
+  font-size: 1.3rem;
+  animation: heartPulse 1.5s infinite ease-in-out;
+}
+
+.heart-count {
+  font-size: 1.4rem;
+  font-weight: 900;
+  color: #ff7eb3;
+  text-shadow: 0 0 10px rgba(255, 126, 179, 0.8);
+}
+
+.heart-max {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 600;
+}
+
+.hud-money {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: #ffd166;
+  background: rgba(255, 209, 102, 0.12);
+  border: 1px solid rgba(255, 209, 102, 0.35);
+  padding: 5px 12px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+.hud-money span {
+  color: #fff3c4;
+}
+
+body.light-mode .hud-money {
+  background: rgba(255, 209, 102, 0.15);
+  border-color: rgba(212, 160, 40, 0.5);
+}
+
+.meter-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-grow: 1;
+}
+
+.meter-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 800;
+  font-size: 0.8rem;
+}
+
+.tier-badge {
+  color: #70a1ff;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+
+/* Emotional status chip: [ 😡 ANGRY ] clarifies her tier at a glance */
+.status-chip {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  border: 1px solid rgba(112, 161, 255, 0.4);
+  background: rgba(112, 161, 255, 0.12);
+  color: #70a1ff;
+  transition: background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}
+
+.speed-info {
+  font-size: 0.75rem;
+  color: #2ed573;
+  font-weight: 700;
+}
+
+.meter-track {
+  width: 100%;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+
+.meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ff416c 0%, #ff4b2b 50%, #ff7eb3 100%);
+  border-radius: 10px;
+  transition: width 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 0 12px #ff7eb3;
+}
+
+/* Floating "+5 ❤️" Popups */
+.floating-delta {
+  position: absolute;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 1.5rem;
+  font-weight: 900;
+  pointer-events: none;
+  animation: floatUpFade 1.2s forwards ease-out;
+  z-index: 101;
+  white-space: nowrap;
+}
+
+.floating-delta.positive {
+  color: #ff7eb3;
+  text-shadow: 0 0 10px rgba(255, 126, 179, 0.8);
+}
+
+.floating-delta.negative {
+  color: #ff4d4d;
+  text-shadow: 0 0 10px rgba(255, 77, 77, 0.8);
+}
+
+.floating-delta.hunger {
+  color: #2ed573;
+  text-shadow: 0 0 10px rgba(46, 213, 115, 0.8);
+}
+
+@keyframes floatUpFade {
+  0% { opacity: 0; transform: translate(-50%, 10px) scale(0.8); }
+  30% { opacity: 1; transform: translate(-50%, -10px) scale(1.2); }
+  100% { opacity: 0; transform: translate(-50%, -40px) scale(1); }
+}
+
+@keyframes heartPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.25); }
+}
+
+/* Light Mode Flashbang Overlay */
+.light-flashbang {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: #ffffff;
+  z-index: 99999;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1s ease-out;
+}
+
+.light-flashbang.active {
+  opacity: 1;
+}
+
+/* Persistent eye-searing sun glare that rides out the WHOLE light gag. */
+.light-sun {
+  position: fixed;
+  inset: 0;
+  z-index: 99998;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at 50% 38%,
+    rgba(255, 255, 255, 1) 0%,
+    rgba(255, 255, 255, 0.95) 35%,
+    rgba(255, 255, 255, 0.72) 65%,
+    rgba(255, 255, 255, 0.92) 100%
+  );
+  mix-blend-mode: screen;
+  animation: light-sun-pulse 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes light-sun-pulse {
+  from { opacity: 0.6; }
+  to { opacity: 1; }
+}
+
+/* During the gag, wash the whole app out to near-white so it's blinding. */
+body.light-mode .app {
+  filter: brightness(1.8) saturate(0.7) contrast(0.9);
+}
+
+/* Fleeing Apologize Button */
+.flee-btn {
+  position: fixed;
+  z-index: 500;
+  padding: 12px 24px;
+  background: #ff4757;
+  color: white;
+  border: 2px solid white;
+  border-radius: 12px;
+  font-weight: 900;
+  font-size: 1rem;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 0 15px rgba(255, 71, 87, 0.8);
+  transition: left 0.08s ease-out, top 0.08s ease-out;
+}
+
+.flee-btn:hover {
+  background: #ff6b81;
+}
+
+.flee-btn:active {
+  transform: scale(0.95);
+}
+
+/* Speedrun Victory Modal */
+.victory-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 8, 20, 0.65);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.victory-modal.visible {
+  display: flex;
+}
+
+.victory-card {
+  text-align: center;
+  padding: 34px 48px;
+  border-radius: 26px;
+  background: linear-gradient(160deg, rgba(42, 22, 62, 0.96), rgba(18, 12, 34, 0.96));
+  border: 2px solid rgba(255, 105, 180, 0.65);
+  box-shadow:
+    0 0 50px rgba(255, 105, 180, 0.5),
+    0 24px 70px rgba(0, 0, 0, 0.7);
+  animation: modalPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.victory-heart {
+  font-size: 3.2rem;
+  animation: heartPulse 1.2s infinite;
+}
+
+.victory-card h2 {
+  margin: 8px 0 2px;
+  font-size: 1.9rem;
+  letter-spacing: 2px;
+  background: linear-gradient(90deg, #ff416c, #ffa502);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.victory-sub {
+  margin: 0 0 18px;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.95rem;
+}
+
+.victory-stats {
+  margin: 6px 0;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 1rem;
+}
+
+.victory-stats strong {
+  color: #ffd166;
+  font-family: 'Courier New', monospace;
+  font-size: 1.15rem;
+}
+
+.victory-close {
+  margin-top: 20px;
+  padding: 10px 34px;
+  border: none;
+  border-radius: 18px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #2a1220;
+  background: linear-gradient(90deg, #ff7eb3, #ff416c);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.victory-close:hover {
+  transform: scale(1.06);
+  box-shadow: 0 0 20px rgba(255, 105, 180, 0.7);
+}
+
+@keyframes modalPop {
+  0% { opacity: 0; transform: scale(0.7); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* Floating Dizzy Spiral Animation */
+.dizzy-star {
+  position: absolute;
+  font-size: 2.2rem;
+  pointer-events: none;
+  z-index: 200;
+  animation: dizzySpin 2.5s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.6));
+}
+
+/* Floating Musical Notes (used by /dance) */
+.music-note {
+  position: absolute;
+  pointer-events: none;
+  z-index: 200;
+  animation: musicRise 2.4s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+  filter: drop-shadow(0 0 8px rgba(255, 209, 102, 0.7));
+}
+
+@keyframes musicRise {
+  0% {
+    opacity: 0;
+    transform: translateY(24px) scale(0.5) rotate(-10deg);
+  }
+  25% {
+    opacity: 1;
+    transform: translateY(-12px) scale(1.25) rotate(8deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-120px) scale(1) rotate(0deg);
+  }
+}
+
+@keyframes dizzySpin {
+  0% {
+    opacity: 0;
+    transform: translateY(20px) scale(0.5) rotate(0deg);
+  }
+  20% {
+    opacity: 1;
+    transform: translateY(-10px) scale(1.3) rotate(180deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-80px) scale(0.8) rotate(720deg);
+  }
+}
+
+/* Gacha snack roll toast */
+#gacha-toast-container {
+  position: absolute;
+  top: 14%;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 150;
+}
+
+.gacha-toast {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 1.2rem;
+  font-weight: 900;
+  color: #a3adc3;
+  background: rgba(12, 15, 24, 0.85);
+  border: 1.5px solid rgba(108, 123, 255, 0.4);
+  border-radius: 12px;
+  padding: 8px 16px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: gachaToastPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.gacha-toast.final {
+  font-size: 1.6rem;
+  text-shadow: 0 0 16px rgba(255, 255, 255, 0.25);
+  box-shadow: 0 0 24px rgba(255, 165, 2, 0.35);
+}
+
+@keyframes gachaToastPop {
+  0% { opacity: 0; transform: translateX(-50%) scale(0.5); }
+  100% { opacity: 1; transform: translateX(-50%) scale(1); }
+}
+
+body.light-mode .gacha-toast {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(91, 108, 255, 0.4);
+}
+
+/* Light mode theme (toggled via #light-mode-btn) */
+body.light-mode {
+  background-color: #ffffff;
+  --bg-0: #ffffff;
+  --bg-1: #ffffff;
+  --bg-2: #f7f9ff;
+  --bg-3: #eef1f8;
+  --border: #d6dbe9;
+  --text-0: #1c2233;
+  --text-1: #4a5470;
+  --text-2: #8a93ab;
+  --accent: #5b6cff;
+  --accent-soft: rgba(91, 108, 255, 0.14);
+  --pink: #ff6b9d;
+  --success: #1f9d6a;
+  --danger: #e0435f;
+}
+
+body.light-mode .stage-panel {
+  background: transparent;
+}
+
+body.light-mode .chat-panel {
+  background: rgba(240, 244, 250, 0.85);
+  border-left-color: rgba(20, 25, 45, 0.12);
+}
+
+body.light-mode .chat-header {
+  background: rgba(255, 255, 255, 0.6);
+  border-bottom-color: rgba(20, 25, 45, 0.12);
+}
+
+body.light-mode .composer-wrap {
+  background: rgba(255, 255, 255, 0.6);
+  border-top-color: rgba(20, 25, 45, 0.12);
+}
+
+body.light-mode .chat-input {
+  background: var(--bg-2);
+}
+
+body.light-mode .chat-input input {
+  background: var(--bg-0);
+  color: var(--text-0);
+}
+
+body.light-mode .bubble.waifu .bubble-content {
+  background: var(--bg-3);
+  border-color: var(--border);
+  color: var(--text-0);
+}
+
+body.light-mode .dialogue-box {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(250, 240, 248, 0.94));
+  border-color: rgba(214, 58, 82, 0.45);
+  box-shadow: 0 0 15px rgba(255, 126, 179, 0.25), inset 0 0 10px rgba(255, 126, 179, 0.08);
+}
+
+body.light-mode .dialogue-box::before {
+  border-color: transparent transparent rgba(255, 255, 255, 0.94) transparent;
+}
+
+body.light-mode .dialogue-box::after {
+  color: #d63a52;
+}
+
+body.light-mode .rpg-action-dock .dock-btn {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(245, 240, 250, 0.92));
+  border-color: rgba(20, 25, 45, 0.18);
+  color: var(--text-0);
+}
+
+body.light-mode .rpg-action-dock .dock-btn:hover {
+  border-color: rgba(214, 58, 82, 0.6);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 18px rgba(255, 126, 179, 0.35);
+}
+
+body.light-mode .rpg-action-dock .dock-btn:nth-child(1) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(228, 250, 238, 0.95));
+}
+body.light-mode .rpg-action-dock .dock-btn:nth-child(2) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 235, 245, 0.95));
+}
+body.light-mode .rpg-action-dock .dock-btn:nth-child(3) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(238, 240, 255, 0.95));
+}
+body.light-mode .rpg-action-dock .dock-btn:nth-child(4) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 250, 230, 0.95));
+}
+
+body.light-mode .status-chip {
+  border-color: rgba(214, 58, 82, 0.4);
+  background: rgba(214, 58, 82, 0.1);
+  color: #d63a52;
+}
+
+body.light-mode .typing-dots span {
+  background: #d63a52;
+}
+
+body.light-mode .eq-pill span {
+  background: linear-gradient(180deg, #d63a52, #6c7bff);
+}
+
+body.light-mode .status-badge {
+  color: var(--text-1);
+  background: var(--bg-3);
+}
+
+body.light-mode .status-badge.online {
+  color: var(--success);
+}
+
+body.light-mode .meter-track {
+  background: rgba(20, 25, 45, 0.12);
+}
+
+body.light-mode .heart-max {
+  color: rgba(20, 25, 45, 0.5);
+}
+
+body.light-mode .speed-info {
+  color: #1f9d6a;
+}
+
+/* JRPG Stat Card (rendered by /stats inside the chat feed) */
+.stats-card {
+  background: linear-gradient(135deg, rgba(18, 24, 38, 0.9), rgba(32, 18, 42, 0.9));
+  border: 1px solid rgba(255, 126, 179, 0.3);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: 8px 0;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+  font-family: inherit;
+}
+
+.stats-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.stats-title {
+  font-weight: 800;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  color: #f8fafc;
+}
+
+/* Mood Badges */
+.stats-badge {
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+.stats-badge.mood-happy { background: rgba(255, 126, 179, 0.2); color: #ff7eb3; border: 1px solid #ff7eb3; }
+.stats-badge.mood-neutral { background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid #38bdf8; }
+.stats-badge.mood-angry { background: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
+
+/* Stat Bars */
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  margin-top: 6px;
+  margin-bottom: 3px;
+}
+
+.stat-val {
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.stat-bar-bg {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.stat-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.stat-bar-fill.affection-fill {
+  background: linear-gradient(90deg, #ff7eb3, #7952b3);
+}
+
+.stat-bar-fill.hunger-fill {
+  background: linear-gradient(90deg, #fbbf24, #f97316);
+}
+
+/* Bottom Grid Metrics */
+.stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.stat-box {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-lbl {
+  font-size: 0.68rem;
+  color: #94a3b8;
+}
+
+.stat-num {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #f8fafc;
+}
+
+body.light-mode .stats-card {
+  background: linear-gradient(135deg, rgba(248, 250, 252, 0.95), rgba(240, 232, 248, 0.95));
+  border-color: rgba(214, 58, 82, 0.35);
+  box-shadow: 0 4px 15px rgba(20, 25, 45, 0.15);
+}
+
+body.light-mode .stats-header {
+  border-bottom: 1px solid rgba(20, 25, 45, 0.12);
+}
+
+body.light-mode .stats-title,
+body.light-mode .stat-val,
+body.light-mode .stat-num {
+  color: #1f2733;
+}
+
+body.light-mode .stat-row,
+body.light-mode .stat-lbl {
+  color: #64748b;
+}
+
+body.light-mode .stat-bar-bg {
+  background: rgba(20, 25, 45, 0.12);
+}
+
+body.light-mode .stat-box {
+  background: rgba(20, 25, 45, 0.04);
+  border-color: rgba(20, 25, 45, 0.08);
+}
+
+@media (max-width: 900px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+  }
+
+  .dialogue-box {
+    width: 90%;
+  }
+
+  .hud-pill {
+    gap: 8px;
+    padding: 7px 12px;
+  }
+
+  .hud-pill .meter-section {
+    display: none;
+  }
+
+  .hud-pill .status-chip {
+    display: none;
+  }
+
+  .hud-pill .status-badge {
+    display: none;
+  }
+
+  /* Mobile: the top-right room switcher would sit on top of the full-width
+     HUD pill, so drop it just below the pill instead of overlapping it. */
+  .room-switcher {
+    top: 58px;
+    right: 8px;
+  }
+
+  .room-trigger {
+    padding: 6px 10px;
+    font-size: 0.7rem;
+  }
+
+  .rpg-action-dock {
+    left: 10px;
+    gap: 8px;
+  }
+
+  .rpg-action-dock .dock-btn {
+    padding: 8px 10px 8px 10px;
+    font-size: 12px;
+    gap: 6px;
+  }
+
+  .rpg-action-dock .dock-icon {
+    font-size: 16px;
+  }
+
+  .rpg-action-dock .dock-label {
+    display: none;
+  }
+}
