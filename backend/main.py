@@ -2,6 +2,7 @@ import json
 import os
 import re
 
+
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -243,3 +244,8 @@ async def chat(request: ChatRequest) -> ChatResponse:
         total_affection=user_affection,
         combo_active=combo_active,
     )
+
+    from fastapi.staticfiles import StaticFiles
+
+# --- Place this at the very bottom of main.py ---
+app.mount("/", StaticFiles(directory="frontend", html=True), name="static")

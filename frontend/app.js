@@ -1,4 +1,4 @@
-const BACKEND_URL = 'http://127.0.0.1:8000';
+const BACKEND_URL = '';
 const WAIFU_NAME = 'Yuki';
 const MODEL_FIT = 0.73;
 const LIP_SYNC_INTERVAL_MS = 100;
@@ -159,7 +159,7 @@ function createFleeingButton() {
         updateHeartHUD(data.total_affection, 10);
       }
     } catch (err) {
-      console.warn('[waifu] apologize request failed', err);
+      console.warn('[waifu] apologize request failed', err);  
     }
     setDialogue("...F-Fine. I suppose I can forgive you. Just this once, idiot.");
   });
