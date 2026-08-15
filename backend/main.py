@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-app = FastAPI(title="Animated AI Waifu Simulator", version="1.0.0")
+app = FastAPI(title="AI Waifu Simulator", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -154,8 +154,8 @@ def build_llm() -> ChatGroq:
     )
 
 
-@app.get("/")
-def read_root() -> dict:
+@app.get("/api/health")
+def health_check():
     return {"app": "Animated AI Waifu Simulator", "status": "online"}
 
 
