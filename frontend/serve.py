@@ -1,6 +1,7 @@
 import http.server
 import socketserver
 import functools
+import os
 
 class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
@@ -9,7 +10,9 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Expires', '0')
         super().end_headers()
 
+PORT = int(os.environ.get('PORT', 5500))
 handler = functools.partial(NoCacheHandler, directory='.')
-with socketserver.TCPServer(('127.0.0.1', 5500), handler) as httpd:
-    print('Serving frontend on http://127.0.0.1:5500 with no-store caching', flush=True)
+
+with socketserver.TCPServer(('0.0.0.0', PORT), handler) as httpd:
+    print(f'Serving frontend on http://0.0.0.0:{PORT} with no-store caching', flush=True)
     httpd.serve_forever()
