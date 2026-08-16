@@ -56,6 +56,7 @@
         <div class="hud-money" id="hud-money" title="Fake gacha money earned from hearts">&#128176; <span id="gacha-money">$0</span></div>
         <div class="hud-divider"></div>
         <span class="status-badge" id="status-badge">offline</span>
+        <span class="voice-badge" id="voice-badge" title="TTS engine">…</span>
       </div>
 
       <!-- Room background switcher -->
@@ -123,16 +124,8 @@
 <!-- 4. Pixi Live2D Display Universal Bundle -->
 <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display/dist/index.min.js"></script>
 
-<!-- 5. TTS + Lip-Sync Engine (Kokoro local TTS + analyser, browser TTS fallback) -->
+<!-- 5. TTS + Lip-Sync Engine (Kokoro local TTS in a Web Worker + analyser, browser TTS fallback) -->
 <script src="tts.js"></script>
-
-<!-- 5b. Kokoro TTS library, loaded as a static module (avoids the dynamic import() that
-        browser extensions like coupon helpers hijack) -->
-<script type="module">
-  import { KokoroTTS } from 'https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js';
-  window.KokoroTTS = KokoroTTS;
-  if (typeof window.__kokoroLibResolve === 'function') window.__kokoroLibResolve();
-</script>
 
 <!-- 6. Your Main Application Logic -->
 <script src="app.js"></script>

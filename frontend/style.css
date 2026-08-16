@@ -102,9 +102,7 @@ body.room-scene::before {
   font-size: 0.8rem;
   font-weight: 800;
   color: #f8fafc;
-  background: rgba(14, 11, 26, 0.72);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: rgba(14, 11, 26, 0.9);
   border: 1px solid rgba(255, 126, 179, 0.35);
   cursor: pointer;
   white-space: nowrap;
@@ -271,11 +269,9 @@ body::after {
   width: min(620px, 84%);
   padding: 26px 18px 15px;
   font-family: 'M PLUS Rounded 1c', var(--font);
-  background: linear-gradient(135deg, rgba(15, 20, 32, 0.95), rgba(28, 18, 38, 0.95));
+  background: linear-gradient(135deg, rgba(15, 20, 32, 0.97), rgba(28, 18, 38, 0.97));
   border: 2px solid #ff7eb3;
   border-radius: 12px;
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   box-shadow: 0 0 15px rgba(255, 126, 179, 0.3), inset 0 0 10px rgba(255, 126, 179, 0.1);
 }
 
@@ -326,13 +322,11 @@ body::after {
   padding: 12px 20px;
   border-radius: 999px;
   border: 1px solid rgba(255, 126, 179, 0.35);
-  background: rgba(14, 11, 26, 0.78);
+  background: rgba(14, 11, 26, 0.92);
   color: #f8fafc;
   font-family: 'M PLUS Rounded 1c', var(--font);
   font-size: 0.95rem;
   outline: none;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
@@ -593,12 +587,10 @@ body::after {
   border: 1px solid rgba(255, 126, 179, 0.3);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0) 45%),
-    rgba(18, 24, 38, 0.85);
+    rgba(18, 24, 38, 0.93);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.25),
     0 4px 15px rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
   overflow: hidden;
   transition: transform 0.2s cubic-bezier(0.18, 0.89, 0.32, 1.28), box-shadow 0.2s ease, border-color 0.2s ease;
 }
@@ -941,9 +933,7 @@ body.light-mode .panic-btn {
   align-items: center;
   gap: 14px;
   padding: 9px 18px;
-  background: rgba(14, 11, 26, 0.72);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: rgba(14, 11, 26, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 22px;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
@@ -955,6 +945,25 @@ body.light-mode .panic-btn {
   width: 1px;
   height: 24px;
   background: rgba(255, 255, 255, 0.12);
+}
+
+.voice-badge {
+  font-size: 0.58rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: rgba(248, 250, 252, 0.6);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.voice-badge.kokoro {
+  color: #2ed573;
+  border-color: rgba(46, 213, 115, 0.4);
+  background: rgba(46, 213, 115, 0.12);
 }
 
 .hud-pill .meter-section {

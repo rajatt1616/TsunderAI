@@ -7,6 +7,34 @@ let ttsAnalyser = null;
 let ttsGainNode = null;
 let currentAudioSource = null;
 
+// ---- Voice tuning (make her sound more feminine) ----
+// Kokoro voice choices (all "af_" = American female): af_heart (sweet/warm),
+// af_sky (bright/energetic), af_bella (elegant), af_jessica (young),
+// af_aoede (musical/lyrical). af_sky reads the most youthful/cheery.
+const KOKORO_VOICE = 'af_sky';
+// >1 raises the pitch = brighter, more feminine. 1.15 is a clear lift.
+const VOICE_PITCH = 1.15;
+// Generation runs synchronously on the main thread (Kokoro WASM), so a slower
+// generation speed would freeze the whole page (Live2D included) longer on
+// EVERY spoken line. Generate at native speed instead; the playback pitch
+// boost still carries the feminine lift (at a slightly brisker tempo).
+const VOICE_SPEED = 1.0;
+
+// Which TTS engine is actually active ("kokoro" | "system") — shown in the
+// HUD badge and logged so it's obvious which path is running.
+function updateVoiceBadge() {
+  const kokoro = !!window.isKokoroReady;
+  window.voiceEngine = kokoro ? 'kokoro' : 'system';
+  const el = document.getElementById('voice-badge');
+  if (el) {
+    el.textContent = kokoro ? 'kokoro' : 'system';
+    el.classList.toggle('kokoro', kokoro);
+    el.title = kokoro ? 'Kokoro neural TTS (af_' + KOKORO_VOICE.slice(3) + ')' : 'Browser speechSynthesis';
+  }
+  console.log('[tts] voice engine:', kokoro ? 'KOKORO (' + KOKORO_VOICE + ')' : 'BROWSER speechSynthesis');
+}
+updateVoiceBadge();
+
 function unlockAudioContext(audioCtx) {
   if (!audioCtx || audioCtx.state !== 'suspended') return;
   const resumeAudio = () => {
@@ -68,16 +96,77 @@ window.getTTSAudioContext = getTTSAudioContext;
 window.getTTSAnalyser = getTTSAnalyser;
 window.getTTSGainNode = getTTSGainNode;
 
-// Resolves once the static <script type="module"> tag has exposed window.KokoroTTS.
-window.kokoroLibPromise = new Promise((resolve) => {
-  window.__kokoroLibResolve = resolve;
-});
+// ---- Kokoro TTS runs in a Web Worker (tts-worker.js) ----
+// Model load + ONNX inference happen off the main thread so the page never
+// freezes while she "thinks". The worker imports kokoro-js itself; this side
+// only spawns the worker, marshals init/generate requests, and plays audio.
+let ttsWorker = null;
+let workerIdCounter = 0;
+const workerPending = new Map(); // id -> { resolve, reject }
 
-// Silently preload the Kokoro ONNX model in the background. Call at startup without await.
-window.preloadKokoroInBackground = async function () {
+function createTTSWorker() {
+  try {
+    return new Worker('tts-worker.js', { type: 'module' });
+  } catch (err) {
+    console.warn('[tts] Web Worker creation failed:', err.message);
+    return null;
+  }
+}
+
+function failKokoro(message) {
+  window.isKokoroReady = false;
+  window.isKokoroLoading = false;
+  updateVoiceBadge();
+  workerPending.forEach((p) => p.reject(new Error(message)));
+  workerPending.clear();
+}
+
+function setupWorkerHandlers(worker) {
+  worker.onmessage = (event) => {
+    const msg = event.data;
+    if (!msg || typeof msg.type !== 'string') return;
+
+    if (msg.type === 'ready') {
+      window.isKokoroReady = true;
+      window.isKokoroLoading = false;
+      updateVoiceBadge();
+      console.log(`[tts] Kokoro ready! (Device: ${msg.device}, Type: ${msg.dtype})`);
+    } else if (msg.type === 'error') {
+      if (msg.id !== undefined) {
+        const pending = workerPending.get(msg.id);
+        if (pending) {
+          workerPending.delete(msg.id);
+          pending.reject(new Error(msg.message));
+        }
+      } else {
+        console.warn('[tts] Kokoro init failed:', msg.message);
+        failKokoro(msg.message);
+      }
+    } else if (msg.type === 'audio') {
+      const pending = workerPending.get(msg.id);
+      if (pending) {
+        workerPending.delete(msg.id);
+        pending.resolve({
+          buffer: msg.buffer,
+          byteOffset: msg.byteOffset || 0,
+          length: msg.length,
+          sampling_rate: msg.sampling_rate,
+        });
+      }
+    }
+  };
+
+  worker.onerror = (event) => {
+    console.warn('[tts] Worker error:', event && event.message);
+    failKokoro('tts worker crashed');
+  };
+}
+
+// Silently preload the Kokoro ONNX model in the background. Call at startup
+// without await; the worker's "ready"/"error" message updates the voice badge.
+window.preloadKokoroInBackground = function () {
   if (window.isKokoroReady || window.isKokoroLoading) return;
 
-  const hasWebGPU = navigator.gpu !== undefined;
   const isLowRAM = navigator.deviceMemory && navigator.deviceMemory < 4;
   const isSlowNetwork =
     navigator.connection &&
@@ -88,44 +177,43 @@ window.preloadKokoroInBackground = async function () {
       `[tts] Kokoro TTS disabled safely (${isLowRAM ? 'Low RAM' : 'Slow Network'}). Falling back to browser TTS.`
     );
     window.isKokoroReady = false;
+    updateVoiceBadge();
     return;
   }
 
   window.isKokoroLoading = true;
-  console.log('[tts] Silently preloading Kokoro in the background...');
-  try {
-    await window.kokoroLibPromise;
-    if (!window.KokoroTTS) throw new Error('kokoro-js module did not load');
-    // WebGPU + q8 gives garbage audio; fp32 for WebGPU, q8 for WASM.
-    const targetDevice = hasWebGPU ? 'webgpu' : 'wasm';
-    const targetDtype = hasWebGPU ? 'fp32' : 'q8';
-    window.kokoroTTS = await window.KokoroTTS.from_pretrained(
-      'onnx-community/Kokoro-82M-v1.0-ONNX',
-      { dtype: targetDtype, device: targetDevice }
-    );
-    window.isKokoroReady = true;
-    console.log(`[tts] Kokoro ready! (Device: ${targetDevice}, Type: ${targetDtype})`);
-  } catch (err) {
-    console.warn('[tts] Kokoro preload failed:', err.message);
-    window.isKokoroReady = false;
-  } finally {
-    window.isKokoroLoading = false;
+  console.log('[tts] Silently preloading Kokoro in a Web Worker...');
+
+  ttsWorker = createTTSWorker();
+  if (!ttsWorker) {
+    failKokoro('could not create worker');
+    return;
   }
+  setupWorkerHandlers(ttsWorker);
+  ttsWorker.postMessage({ type: 'init' });
 };
 
-// Generates audio using local Kokoro and returns an AudioBuffer (or null).
-window.generateKokoroAudioBuffer = async function (text, voice = 'af_heart') {
-  if (!window.isKokoroReady || !window.kokoroTTS) return null;
-  try {
-    const raw = await window.kokoroTTS.generate(text, { voice, speed: 1.0 });
-    const ctx = getTTSAudioContext();
-    const buffer = ctx.createBuffer(1, raw.audio.length, raw.sampling_rate);
-    buffer.copyToChannel(raw.audio, 0);
-    return buffer;
-  } catch (err) {
-    console.warn('[tts] Kokoro generation failed:', err.message);
-    return null;
-  }
+// Generates audio using Kokoro (inside the worker) and returns an AudioBuffer
+// (or null on any failure, so callers fall back to browser TTS).
+window.generateKokoroAudioBuffer = function (text, voice = KOKORO_VOICE) {
+  if (!window.isKokoroReady || !ttsWorker) return Promise.resolve(null);
+
+  return new Promise((resolve, reject) => {
+    const id = ++workerIdCounter;
+    workerPending.set(id, { resolve, reject });
+    ttsWorker.postMessage({ type: 'generate', id, text, voice, speed: VOICE_SPEED });
+  })
+    .then((raw) => {
+      const ctx = getTTSAudioContext();
+      const float32 = new Float32Array(raw.buffer, raw.byteOffset, raw.length);
+      const buffer = ctx.createBuffer(1, raw.length, raw.sampling_rate);
+      buffer.copyToChannel(float32, 0);
+      return buffer;
+    })
+    .catch((err) => {
+      console.warn('[tts] Kokoro generation failed:', err && err.message ? err.message : err);
+      return null;
+    });
 };
 
 // Plays a buffer through the analyser. Lip-sync and emotion are tied to the
@@ -211,6 +299,8 @@ window.playAudioBuffer = function (buffer, callbacks = {}) {
       };
     } else {
       source.connect(analyser);
+      // Brighten her voice with a slight upward pitch shift (feminine lift).
+      if (VOICE_PITCH !== 1) source.playbackRate.value = VOICE_PITCH;
       source.onended = () => {
         window.__isSpeaking = false;
         window.__isAnalyserSpeaking = false;

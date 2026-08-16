@@ -186,6 +186,7 @@ const DIZZY_DISTANCE_THRESHOLD = 2000; // total px of movement to trigger
 const DIZZY_COOLDOWN_MS = 4000;
 
 let mouseHistory = [];
+let mouseHistoryTotal = 0;
 let isDizzy = false;
 let dizzyWobbleTimer = null;
 let dizzySpiralTimer = null;
@@ -198,19 +199,20 @@ function handlePointerShake(e) {
   const dy = Math.abs(e.movementY || 0);
   const distance = Math.sqrt(dx * dx + dy * dy);
 
-  // 1. Record movement magnitude + timestamp.
+  // Incremental rolling window: push the sample and age out entries older than
+  // 500ms in amortized O(1). Avoids rebuilding + re-summing the whole window on
+  // every pointermove (which fired on every mouse move and caused GC churn).
   mouseHistory.push({ time: now, distance });
+  mouseHistoryTotal += distance;
+  while (mouseHistory.length && now - mouseHistory[0].time >= DIZZY_DISTANCE_WINDOW_MS) {
+    mouseHistoryTotal -= mouseHistory.shift().distance;
+  }
 
-  // 2. Keep only data from the last 500ms.
-  mouseHistory = mouseHistory.filter((entry) => now - entry.time < DIZZY_DISTANCE_WINDOW_MS);
-
-  // 3. Sum total distance moved inside the window.
-  const totalDistance = mouseHistory.reduce((sum, entry) => sum + entry.distance, 0);
-
-  // 4. ONLY trigger the meltdown if the window exceeds the threshold.
+  // ONLY trigger the meltdown if the window exceeds the threshold.
   // The wobble only triggers if the mouse travels over 2000px within 500ms.
-  if (totalDistance > DIZZY_DISTANCE_THRESHOLD) {
+  if (mouseHistoryTotal > DIZZY_DISTANCE_THRESHOLD) {
     mouseHistory = [];
+    mouseHistoryTotal = 0;
     triggerDizzyMeltdown();
   }
 }
@@ -293,6 +295,7 @@ function stopDizzyState() {
   dizzyWobbleTimer = null;
   window.clearTimeout(dizzySpiralTimer);
   mouseHistory = [];
+  mouseHistoryTotal = 0;
   if (waifuModel) waifuModel.rotation = 0;
   isDizzy = false;
 }
@@ -866,9 +869,10 @@ function hideComboUI() {
 
 // Voice-overlap lock: disable the action buttons while TTS audio is active so
 // rapid clicks can't stack overlapping voice streams or broken animations.
+let dockButtonsCache = null;
 function setActionButtonsLock(disabled) {
-  const buttons = document.querySelectorAll('.rpg-action-dock .dock-btn');
-  buttons.forEach((btn) => {
+  if (!dockButtonsCache) dockButtonsCache = Array.from(document.querySelectorAll('.rpg-action-dock .dock-btn'));
+  dockButtonsCache.forEach((btn) => {
     btn.disabled = disabled;
     btn.classList.toggle('btn-disabled', disabled);
   });
@@ -1065,12 +1069,21 @@ let currentMouth = 0;
 let currentEmotion = 'neutral';
 let knownParams = null;
 let emotionResetTimer = null;
+let lastSpeechFlag = false;
 
+// Cap the internal render resolution at 1.5x. Rendering a fullscreen Live2D
+// canvas at the full devicePixelRatio (2x/3x on Retina/high-DPI screens) is the
+// single biggest GPU fill-rate cost. autoDensity keeps the CSS size identical,
+// so the only loss is a tiny bit of on-model sharpness on 2x+ displays.
+// Antialias is off: 4x MSAA across a fullscreen WebGL canvas is the next-biggest
+// fill-rate cost, and the Live2D art is texture-drawn (vector-smooth) so MSAA
+// barely improves it. powerPreference asks the browser for the discrete GPU.
 const app = new PIXI.Application({
   view: canvas,
-  antialias: true,
+  antialias: false,
   autoDensity: true,
-  resolution: window.devicePixelRatio || 1,
+  resolution: Math.min(window.devicePixelRatio || 1, 1.5),
+  powerPreference: 'high-performance',
   backgroundAlpha: 0,
 });
 
@@ -1103,7 +1116,7 @@ function setDialogue(text) {
       window.clearInterval(dialogueTypeTimer);
       dialogueTypeTimer = null;
     }
-  }, 28);
+  }, 12);
 }
 
 // Toggle the speaking/typing visual states on the dialogue box. The equalizer
@@ -1305,21 +1318,30 @@ function stopLipSync() {
 
 function pickVoice(synth) {
   const voices = synth.getVoices();
-  return (
-    voices.find((v) => /female|samantha|zira|google us english|aria/i.test(v.name)) ||
-    voices.find((v) => v.lang.startsWith('en')) ||
-    null
-  );
+  if (!voices.length) return null;
+  // Score every voice for "feminine" and pick the best instead of grabbing the
+  // first regex match (which can land on a male/robotic system voice).
+  const score = (v) => {
+    const n = `${v.name} ${v.lang}`;
+    let s = 0;
+    if (/female|woman|girl|zira|aria|jenny|samantha|joanna|salli|karen|nancy|amy|libby|olivia|susan/i.test(n)) s += 4;
+    if (/google|natural|online|neural|premium/i.test(n)) s += 2;
+    if (v.lang.startsWith('en')) s += 1;
+    return s;
+  };
+  return voices.reduce((best, v) => (score(v) > score(best) ? v : best), voices[0]);
 }
 
-function speakResponse(text, emotion, audioBuffer) {
+function speakResponse(text, emotion, audioBuffer, opts = {}) {
   if (emotionResetTimer !== null) {
     window.clearTimeout(emotionResetTimer);
     emotionResetTimer = null;
   }
 
   // Update the dialogue and switch the expression the moment her voice starts.
-  setDialogue(text);
+  // opts.skipDialogue is set when the reply text is already on screen (chat
+  // path) so she doesn't blank + re-type the same line when the audio lands.
+  if (!opts.skipDialogue) setDialogue(text);
   setYukiExpression(emotion);
 
   // Kokoro path: audio-buffer playback drives the analyser lip-sync.
@@ -1349,8 +1371,8 @@ function speakResponse(text, emotion, audioBuffer) {
   const voice = pickVoice(synth);
   if (voice) utterance.voice = voice;
   utterance.lang = 'en-US';
-  utterance.rate = 1.05;
-  utterance.pitch = 1.3;
+  utterance.rate = 0.98;
+  utterance.pitch = 1.4;
   utterance.volume = 1;
   utterance.onstart = () => {
     window.__isSpeaking = true;
@@ -1910,22 +1932,25 @@ async function sendMessage(raw) {
     }
     setStatus('online');
     appendBubble('waifu', cleanReply);
-    setDialogue('...Hmph. Fine, let me think about that.');
 
-    // Generate the audio first so emotion + lip-sync start in sync with the voice.
+    // Show the reply immediately — don't make her "respond" wait for TTS. The
+    // voice renders in the background and starts when it's ready.
+    setDialogue(cleanReply);
+
+    // Free the input right away so the user can keep chatting while the audio
+    // renders; playAudioBuffer cancels any previous source, so overlap is safe.
+    chatField.disabled = false;
+    sendBtn.disabled = false;
+
     let audioBuffer = null;
     if (window.generateKokoroAudioBuffer && window.isKokoroReady) {
-      setDialogueTyping(true);
       try {
         audioBuffer = await window.generateKokoroAudioBuffer(cleanReply);
       } catch (e) {
         console.warn('[waifu] kokoro generation failed, using browser TTS', e);
-      } finally {
-        setDialogueTyping(false);
       }
     }
-
-    speakResponse(cleanReply, emotion, audioBuffer);
+    speakResponse(cleanReply, emotion, audioBuffer, { skipDialogue: true });
   } catch (err) {
     console.error('[waifu] chat request failed', err);
     setStatus('offline');
@@ -2486,7 +2511,12 @@ async function init() {
       waifuModel.x = app.screen.width / 2;
       waifuModel.y = app.screen.height - 10 + (roomSceneActive ? ROOM_MODEL_Y_OFFSET : 0);
 
-      waifuModel.update(app.ticker.deltaMS / 16.667);
+      // pixi-live2d-display's Live2DModel.update() expects deltaTime in
+      // MILLISECONDS (it just accumulates deltaTime and consumes it in _render,
+      // and its internal model divides by 1000 for the Cubism core). Passing
+      // deltaMS/16.667 (~1ms) made blink/breath/physics and the mouse gaze-follow
+      // run ~17x slower — the "lag". Always pass the raw deltaMS.
+      waifuModel.update(app.ticker.deltaMS);
       if (!modelFitted) {
         fitModel(waifuModel);
         modelFitted = true;
@@ -2509,9 +2539,15 @@ async function init() {
       }
 
       // Equalizer pill + typing dots follow the same speech flag as lip-sync.
-      setDialogueSpeaking(window.__isSpeaking);
-      // Keep the action-button lock in sync with speech state.
-      syncActionButtonsLock();
+      // Only write the DOM when the flag actually flips — setting classes and
+      // toggling button `disabled` on every single frame forces constant style
+      // recalc + layout even when nothing changed.
+      const speakingNow = !!window.__isSpeaking;
+      if (speakingNow !== lastSpeechFlag) {
+        lastSpeechFlag = speakingNow;
+        setDialogueSpeaking(speakingNow);
+        syncActionButtonsLock();
+      }
 
       if (!window.__frameCount) window.__frameCount = 0;
       window.__frameCount++;
