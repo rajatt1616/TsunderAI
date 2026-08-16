@@ -57,7 +57,7 @@ AFFECTION_CHANGE: +2
 EMOTIONS = {"neutral", "happy", "blush", "annoyed", "surprised", "angry"}
 
 EMOTION_TAG_RE = re.compile(
-    r"^\[EMOTION:\s*(neutral|happy|blush|angry|surprised)\]\s*", re.IGNORECASE
+    r"\[EMOTION:\s*(neutral|happy|blush|angry|surprised)\]\s*", re.IGNORECASE
 )
 
 # Global affection state (starts at 20 - Classic Tsundere).
@@ -104,18 +104,24 @@ def parse_reply(content: str) -> tuple[str, str, int]:
     text = raw
     change = 0
 
-    tag = EMOTION_TAG_RE.match(text)
+    tag = EMOTION_TAG_RE.search(text)
     if tag:
         emotion = tag.group(1).lower()
         text = EMOTION_TAG_RE.sub("", text).strip()
 
-    aff = re.search(r"AFFECTION_CHANGE\s*:\s*([+-]?\d+)", text, re.IGNORECASE)
+    # Strip ANY leftover bracketed tags (e.g. [blushes], [sighs], [POV:]) so
+    # stage directions never leak into the dialogue or the TTS audio.
+    text = re.sub(r"\[[^\]]*\]", "", text).strip()
+
+    # Accept any variant of the affection line the model might produce:
+    # "AFFECTION_CHANGE: +2", "Affection Change: +3", "affection change +1"...
+    aff = re.search(r"AFFECTION\s*[-_ ]?\s*CHANGE\s*:?\s*([+-]?\d+)", text, re.IGNORECASE)
     if aff:
         try:
             change = int(aff.group(1))
         except (TypeError, ValueError):
             change = 0
-        text = re.sub(r"AFFECTION_CHANGE\s*:\s*[+-]?\d+", "", text, flags=re.IGNORECASE).strip()
+        text = re.sub(r"AFFECTION\s*[-_ ]?\s*CHANGE\s*:?\s*[+-]?\d+", "", text, flags=re.IGNORECASE).strip()
 
     if not tag and not aff:
         # JSON fallback for models that ignore the 3-line format.
@@ -245,14 +251,16 @@ def chat(request: ChatRequest) -> ChatResponse:
     if not reply:
         reply = "...I have nothing to say to you right now. Don't get the wrong idea."
 
-    # Combo streak: 3 consecutive positive replies grants a 2x multiplier.
+    # Combo streak: 3 consecutive positive replies grants a 2x multiplier, then
+    # the streak resets so the bonus re-arms only after the next 3 positives.
     combo_active = False
     if change > 0:
         combo_streak += 1
         if combo_streak >= 3:
             change *= 2
             combo_active = True
-    elif change < 0:
+            combo_streak = 0
+    else:
         combo_streak = 0
 
     # Update and clamp the affection score (-100 to 100), then remember the reply.

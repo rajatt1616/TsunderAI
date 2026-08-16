@@ -1485,7 +1485,7 @@ function escapeHtml(text) {
 // Strips the deterministic [EMOTION: tag] prefix the LLM emits, maps "angry"
 // onto the frontend's "annoyed" parameter preset, and returns clean TTS text.
 function parseLLMResponse(rawText) {
-  const emotionRegex = /^\[EMOTION:\s*(neutral|happy|blush|angry|surprised)\]\s*/i;
+  const emotionRegex = /\[EMOTION:\s*(neutral|happy|blush|angry|surprised)\]\s*/i;
   const match = rawText.match(emotionRegex);
 
   let emotion = 'neutral';
@@ -1496,6 +1496,14 @@ function parseLLMResponse(rawText) {
     if (emotion === 'angry') emotion = 'annoyed';
     cleanDialogue = rawText.replace(emotionRegex, '').trim();
   }
+
+  // Strip any leftover bracketed tags (e.g. [blushes], [sighs]) so the TTS
+  // engine never reads stage directions out loud.
+  cleanDialogue = cleanDialogue.replace(/\[[^\]]*\]/g, '').trim();
+
+  // Affection-change lines from the model (any spacing/case) never belong in
+  // dialogue either.
+  cleanDialogue = cleanDialogue.replace(/affection\s*[-_ ]?\s*change\s*:?\s*[+-]?\d+/gi, '').trim();
 
   return { emotion, cleanDialogue };
 }
