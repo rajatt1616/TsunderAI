@@ -1,12 +1,16 @@
+import asyncio
 import json
 import os
 import random
 import re
+from xml.sax.saxutils import escape
 
+import edge_tts
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
 from pydantic import BaseModel
@@ -78,6 +82,13 @@ class ChatRequest(BaseModel):
 
 class AdjustRequest(BaseModel):
     delta: int = 0
+
+
+class TTSRequest(BaseModel):
+    text: str
+    voice: str = "en-US-JennyNeural"
+    rate: str = "+0%"
+    pitch: str = "+0Hz"
 
 
 class ChatResponse(BaseModel):
@@ -179,7 +190,50 @@ FALLBACK_REPLIES = [
 
 @app.get("/api/health")
 def health_check():
-    return {"app": "Animated AI Waifu Simulator", "status": "online"}   
+    return {"app": "Animated AI Waifu Simulator", "status": "online"}
+
+
+@app.post("/api/tts")
+async def text_to_speech(request: TTSRequest):
+    text = (request.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    text = text[:1000]
+
+    voice = request.voice or "en-US-JennyNeural"
+    if not re.fullmatch(r"[A-Za-z0-9\-]+", voice):
+        raise HTTPException(status_code=400, detail="invalid voice")
+
+    rate = request.rate or "+0%"
+    pitch = request.pitch or "+0Hz"
+    if not re.fullmatch(r"[+-]?\d+(\.\d+)?%", rate):
+        raise HTTPException(status_code=400, detail="invalid rate")
+    if not re.fullmatch(r"[+-]\d+Hz", pitch, re.IGNORECASE):
+        raise HTTPException(status_code=400, detail="invalid pitch")
+
+    # XML-escape so <, >, & in dialogue can't break the SSML document.
+    text = escape(text)
+
+    async def synthesize() -> bytes:
+        mp3 = bytearray()
+        communicate = edge_tts.Communicate(text, voice=voice, rate=rate, pitch=pitch)
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                mp3.extend(chunk["data"])
+        return bytes(mp3)
+
+    try:
+        audio = await asyncio.wait_for(synthesize(), timeout=15)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="TTS timed out")
+    except Exception as err:
+        print(f"[TTS] edge-tts error: {type(err).__name__}: {err}")
+        raise HTTPException(status_code=502, detail="TTS synthesis failed")
+
+    if not audio:
+        raise HTTPException(status_code=502, detail="TTS produced no audio")
+
+    return StreamingResponse(iter([audio]), media_type="audio/mpeg")
 
 
 @app.post("/reset")

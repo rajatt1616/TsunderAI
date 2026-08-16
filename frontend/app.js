@@ -252,9 +252,9 @@ async function triggerDizzyMeltdown() {
   // 4. Roasted voice line.
   const text = DIZZY_REACTIONS[Math.floor(Math.random() * DIZZY_REACTIONS.length)];
   let audioBuffer = null;
-  if (window.generateKokoroAudioBuffer && window.isKokoroReady) {
+  if (window.generateTTSAudioBuffer && window.ttsReady) {
     try {
-      audioBuffer = await window.generateKokoroAudioBuffer(text);
+      audioBuffer = await window.generateTTSAudioBuffer(text, 'annoyed');
     } catch (e) {
       console.warn('[waifu] kokoro failed for dizzy reaction', e);
     }
@@ -495,9 +495,9 @@ async function rollSnackGacha() {
   }
 
   let audioBuffer = null;
-  if (window.generateKokoroAudioBuffer && window.isKokoroReady) {
+  if (window.generateTTSAudioBuffer && window.ttsReady) {
     try {
-      audioBuffer = await window.generateKokoroAudioBuffer(result.text);
+      audioBuffer = await window.generateTTSAudioBuffer(result.text, result.emotion);
     } catch (e) {
       console.warn('[waifu] kokoro failed for snack reaction', e);
     }
@@ -610,9 +610,9 @@ async function threatenDelete() {
   }
 
   let audioBuffer = null;
-  if (window.generateKokoroAudioBuffer && window.isKokoroReady) {
+  if (window.generateTTSAudioBuffer && window.ttsReady) {
     try {
-      audioBuffer = await window.generateKokoroAudioBuffer(text);
+      audioBuffer = await window.generateTTSAudioBuffer(text, emotion);
     } catch (e) {
       console.warn('[waifu] kokoro failed for delete threat', e);
     }
@@ -1338,6 +1338,11 @@ function speakResponse(text, emotion, audioBuffer, opts = {}) {
     emotionResetTimer = null;
   }
 
+  // Emotion-reactive voice tuning: `getVoicePreset` lives in tts.js. Kokoro
+  // generation already used the preset's tempo; here we apply the preset's
+  // playback pitch and mirror it onto the browser-TTS fallback.
+  const preset = window.getVoicePreset ? window.getVoicePreset(emotion) : null;
+
   // Update the dialogue and switch the expression the moment her voice starts.
   // opts.skipDialogue is set when the reply text is already on screen (chat
   // path) so she doesn't blank + re-type the same line when the audio lands.
@@ -1353,6 +1358,7 @@ function speakResponse(text, emotion, audioBuffer, opts = {}) {
       affection < 20 ? Math.min(1, Math.max(0.3, (20 - affection) / 40)) : 0;
     window.playAudioBuffer(audioBuffer, {
       distort: demonIntensity,
+      pitch: preset ? preset.pitch : undefined,
       onEnd: () => {
         // Smoothly close her mouth (the ticker lerps it shut), then relax to neutral.
         emotionResetTimer = window.setTimeout(() => setYukiExpression('neutral'), 3000);
@@ -1371,8 +1377,9 @@ function speakResponse(text, emotion, audioBuffer, opts = {}) {
   const voice = pickVoice(synth);
   if (voice) utterance.voice = voice;
   utterance.lang = 'en-US';
-  utterance.rate = 0.98;
-  utterance.pitch = 1.4;
+  // Mirror the emotion preset onto the fallback voice (its pitch is 0..2).
+  utterance.rate = preset ? preset.speed * 0.98 : 0.98;
+  utterance.pitch = preset ? Math.min(2, preset.pitch * 1.15) : 1.4;
   utterance.volume = 1;
   utterance.onstart = () => {
     window.__isSpeaking = true;
@@ -1607,9 +1614,9 @@ function attemptHeadpat() {
   playMotion('TapBody', 0, 3);
   setDialogue(reaction.text);
   registerInteractionCombo();
-  if (window.generateKokoroAudioBuffer) {
+  if (window.generateTTSAudioBuffer) {
     window
-      .generateKokoroAudioBuffer(reaction.text)
+      .generateTTSAudioBuffer(reaction.text, reaction.emotion)
       .then((buffer) => speakResponse(reaction.text, reaction.emotion, buffer))
       .catch(() => speakResponse(reaction.text, reaction.emotion, null));
   } else {
@@ -1654,9 +1661,9 @@ function attemptApologize() {
 
   playMotion('TapBody', 0, 3);
   setDialogue(text);
-  if (window.generateKokoroAudioBuffer) {
+  if (window.generateTTSAudioBuffer) {
     window
-      .generateKokoroAudioBuffer(text)
+      .generateTTSAudioBuffer(text, emotion)
       .then((buffer) => speakResponse(text, emotion, buffer))
       .catch(() => speakResponse(text, emotion, null));
   } else {
@@ -1734,9 +1741,9 @@ function attemptDance() {
       .catch((err) => console.warn('[waifu] dance adjust failed', err));
 
     setDialogue(text);
-    if (window.generateKokoroAudioBuffer) {
+    if (window.generateTTSAudioBuffer) {
       window
-        .generateKokoroAudioBuffer(text)
+        .generateTTSAudioBuffer(text, emotion)
         .then((buffer) => speakResponse(text, emotion, buffer))
         .catch(() => speakResponse(text, emotion, null));
     } else {
@@ -1882,9 +1889,9 @@ async function handleClearCommand() {
   triggerScreenShake(14, 700);
 
   let audioBuffer = null;
-  if (window.generateKokoroAudioBuffer && window.isKokoroReady) {
+  if (window.generateTTSAudioBuffer && window.ttsReady) {
     try {
-      audioBuffer = await window.generateKokoroAudioBuffer(text);
+      audioBuffer = await window.generateTTSAudioBuffer(text, 'annoyed');
     } catch (e) {
       console.warn('[waifu] kokoro failed for clear panic', e);
     }
@@ -1951,9 +1958,9 @@ async function sendMessage(raw) {
     sendBtn.disabled = false;
 
     let audioBuffer = null;
-    if (window.generateKokoroAudioBuffer && window.isKokoroReady) {
+    if (window.generateTTSAudioBuffer && window.ttsReady) {
       try {
-        audioBuffer = await window.generateKokoroAudioBuffer(cleanReply);
+        audioBuffer = await window.generateTTSAudioBuffer(cleanReply, emotion);
       } catch (e) {
         console.warn('[waifu] kokoro generation failed, using browser TTS', e);
       }
@@ -2037,9 +2044,9 @@ function triggerLightModeFlashbang(bypassCooldown = false) {
     cleanup();
     const relief = LIGHT_MODE_RELIEF[Math.floor(Math.random() * LIGHT_MODE_RELIEF.length)];
     setDialogue(relief);
-    if (window.generateKokoroAudioBuffer && window.isKokoroReady) {
+    if (window.generateTTSAudioBuffer && window.ttsReady) {
       window
-        .generateKokoroAudioBuffer(relief)
+        .generateTTSAudioBuffer(relief, 'neutral')
         .then((audio) => speakResponse(relief, 'neutral', audio))
         .catch(() => speakResponse(relief, 'neutral', null));
     } else {
@@ -2058,9 +2065,9 @@ function triggerLightModeFlashbang(bypassCooldown = false) {
   }, gagWindow);
 
   const speak = () => {
-    if (window.generateKokoroAudioBuffer && window.isKokoroReady) {
+    if (window.generateTTSAudioBuffer && window.ttsReady) {
       window
-        .generateKokoroAudioBuffer(line)
+        .generateTTSAudioBuffer(line, 'annoyed')
         .then((audio) => speakResponse(line, 'annoyed', audio))
         .catch(() => speakResponse(line, 'annoyed', null));
     } else {
@@ -2135,9 +2142,9 @@ function setupDevToolsTrap() {
         .catch((err) => console.warn('[waifu] devtools adjust failed', err));
 
       let audioBuffer = null;
-      if (window.generateKokoroAudioBuffer && window.isKokoroReady) {
+      if (window.generateTTSAudioBuffer && window.ttsReady) {
         window
-          .generateKokoroAudioBuffer(line)
+          .generateTTSAudioBuffer(line, 'annoyed')
           .then((buffer) => speakResponse(line, 'annoyed', buffer))
           .catch(() => speakResponse(line, 'annoyed', null));
       } else {
@@ -2499,7 +2506,7 @@ async function init() {
       playMotion('TapBody', 0, 3);
 
       setDialogue(reaction.text);
-      window.generateKokoroAudioBuffer(reaction.text)
+      window.generateTTSAudioBuffer(reaction.text, reaction.emotion)
         .then((buffer) => speakResponse(reaction.text, reaction.emotion, buffer))
         .catch(() => speakResponse(reaction.text, reaction.emotion, null));
     });
@@ -2577,9 +2584,9 @@ async function init() {
       // If Kokoro is still preloading (async), wait briefly for it so the
       // interrogation gets the full voice; otherwise fall back to browser TTS.
       const speakLateNight = () => {
-        if (window.generateKokoroAudioBuffer) {
+        if (window.generateTTSAudioBuffer) {
           window
-            .generateKokoroAudioBuffer(lateNightPrompt)
+            .generateTTSAudioBuffer(lateNightPrompt, 'annoyed')
             .then((audio) => speakResponse(lateNightPrompt, 'annoyed', audio))
             .catch(() => speakResponse(lateNightPrompt, 'annoyed', null));
         } else {
