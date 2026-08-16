@@ -314,8 +314,8 @@ async function generateEdgeAudioBuffer(text, rateStr) {
 // lifted for an energetic forward sound, and reverb/compression glue it. The
 // reverb impulse response is generated procedurally (decaying noise) — no
 // external asset needed — and cached per audio context.
-const POLISH_WET = 0.12; // reverb wet mix (0..1)
-const POLISH_DECAY = 1.1; // reverb tail length in seconds
+const POLISH_WET = 0.07; // reverb wet mix (0..1) — kept low so it reads as room ambience, not an echo
+const POLISH_DECAY = 0.45; // reverb tail length in seconds — short, so the bright anime EQ stays clean
 const POLISH_THIN_FREQ = 140; // highpass below this removes boom/chest weight
 const POLISH_WARMTH = 1.2; // lowshelf boost in dB (kept subtle)
 const POLISH_AIR = 1; // highshelf cut in dB (kept small so she stays bright)
