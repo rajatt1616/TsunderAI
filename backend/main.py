@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import re
 
 
@@ -146,13 +147,28 @@ def build_llm() -> ChatGroq:
         raise RuntimeError(
             "GROQ_API_KEY is missing. Create backend/.env with GROQ_API_KEY=your_key"
         )
+    # llama-3.1-8b-instant has a ~1M tokens/day free quota (vs 100k for the 70b
+    # model) and answers faster, so it won't burn out mid-session. Override with
+    # GROQ_MODEL in backend/.env if you prefer a different model.
+    model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
     return ChatGroq(
-        model="llama-3.3-70b-versatile",
+        model=model,
         api_key=api_key,
         temperature=0.7,
         max_tokens=120,
         timeout=60,
     )
+
+
+# Offline fallback lines used when the LLM API is down/rate-limited so Yuki
+# still answers instead of breaking the chat. Each is (text, emotion, delta).
+FALLBACK_REPLIES = [
+    ("Hmph. My brain's taking a break right now... don't get the wrong idea, I was just thinking of you.", "blush", 2),
+    ("Ugh, I can't reach my thoughts right now. Say that again when I'm not busy being cute.", "neutral", 1),
+    ("...My head's a little full right now, so I'll let that slide. Don't expect it twice, idiot.", "annoyed", 0),
+    ("I heard you, dummy. I'm just choosing not to think about it. Ask me again in a minute.", "neutral", 0),
+    ("E-Even I need a second to think sometimes, you know?! Don't rush me!", "blush", 1),
+]
 
 
 @app.get("/api/health")
@@ -191,7 +207,7 @@ def adjust_affection(request: AdjustRequest) -> dict:
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest) -> ChatResponse:
+def chat(request: ChatRequest) -> ChatResponse:
     global user_affection, combo_streak
 
     message = request.message.strip()
@@ -217,9 +233,15 @@ async def chat(request: ChatRequest) -> ChatResponse:
         for m in HISTORY
     ]
 
-    llm = build_llm()
-    result = llm.invoke(messages)
-    reply, emotion, change = parse_reply(result.content)
+    try:
+        llm = build_llm()
+        result = llm.invoke(messages)
+        reply, emotion, change = parse_reply(result.content)
+    except Exception as err:
+        # API down / rate limited / no key: keep the game alive with a local
+        # canned tsundere line instead of returning a 500 to the frontend.
+        print(f"[LLM] {type(err).__name__}: {err}")
+        reply, emotion, change = random.choice(FALLBACK_REPLIES)
     if not reply:
         reply = "...I have nothing to say to you right now. Don't get the wrong idea."
 
