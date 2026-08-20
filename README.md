@@ -15,7 +15,7 @@ The companion, Yuki, is a tsundere persona. Every reply is tagged with an emotio
 
 - **LLM chat** with a constrained reply format: each message returns an emotion tag, short spoken dialogue, and an affection delta.
 - **Affection system** scoring interactions from -100 to 100. A streak of three positive replies triggers a 2x multiplier. Slash commands let you feed, apologize to, headpat, or dance with her.
-- **Emotion-reactive voice** driven by per-emotion tempo and pitch presets, with a small random jitter so consecutive lines do not sound identical.
+- **Emotion-reactive voice** driven by per-emotion tempo and pitch presets (applied via Edge SSML, so the voice stays one consistent girl while moods shift the delivery).
 - **Text-to-speech with three fallbacks** in priority order: the backend Edge TTS route, local Kokoro TTS running in a Web Worker, then the browser's built-in `speechSynthesis`. Lip-sync is driven by an audio analyser.
 - **Live2D presentation** using the Hiyori Cubism 4 model with physics, idle motions, and parameter presets for each emotion (mouth is reserved for lip-sync).
 - **Gamified extras**: a speedrun timer, fake gacha currency earned from affection, switchable room backgrounds, and an offline fallback so the character still responds when the LLM API is unavailable.
@@ -64,13 +64,19 @@ The backend also serves the frontend as static files at `/`, so the application 
    # GROQ_MODEL=llama-3.1-8b-instant
    ```
 
-3. Start the backend (this also serves the frontend at `http://localhost:8000`):
+3. Start the backend (this also serves the frontend at `http://localhost:8000`). From the `backend/` directory:
 
    ```sh
-   uvicorn main:app --reload
+   python -m uvicorn main:app --reload
    ```
 
-   From the `backend/` directory. Alternatively, serve the frontend on its own port:
+   Or from the project root:
+
+   ```sh
+   python -m uvicorn backend.main:app --reload
+   ```
+
+   Alternatively, serve the frontend on its own port:
 
    ```sh
    python serve.py        # serves frontend/ on http://localhost:5500

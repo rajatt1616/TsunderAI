@@ -1,6 +1,7 @@
 // --- TTS + Lip-Sync engine ---
 // Adapted from the app's own kokoro_manager.js / audio_context_manager.js / audio_player.js.
-// Local neural TTS (Kokoro) with analyser-driven lip sync; falls back to browser speechSynthesis.
+// Primary: Edge neural TTS (backend /api/tts) with analyser-driven lip sync.
+// Fallbacks: local Kokoro in a Web Worker, then browser speechSynthesis.
 
 let ttsAudioContext = null;
 let ttsAnalyser = null;
@@ -13,39 +14,119 @@ let currentAudioSource = null;
 // af_aoede (musical/lyrical). af_sky reads the most youthful/cheery.
 const KOKORO_VOICE = 'af_sky';
 // Edge (Microsoft neural) voice used when the backend /api/tts route is
-// reachable. en-US-JennyNeural is a natural, friendly female voice.
-const EDGE_VOICE = 'en-US-JennyNeural';
-// >1 raises the pitch = brighter, more youthful. 1.22 (~+3.5 semitones) lifts
-// Jenny into a high, cute anime-girl register; the emotion presets ride on top.
-const VOICE_PITCH = 1.22;
-// Per-emotion tempo/pitch live in VOICE_PRESETS below; generation speed is
-// kept near-native (0.95-1.15) so the page never freezes noticeably while a
-// line renders.
-
-// ---- Emotion-reactive voice presets ----
-// Each emotion shifts the generated tempo (speed) and the playback pitch so
-// her voice actually sounds happy, flustered, or annoyed instead of reading
-// every line in the same neutral tone. Applied in getVoicePreset(). The whole
-// table sits well above natural pitch for a youthful anime-girl cadence; speed
-// is pushed slightly up for that bright, energetic delivery.
-const VOICE_PRESETS = {
-  neutral: { speed: 1.04, pitch: 1.22 },
-  happy: { speed: 1.1, pitch: 1.28 },
-  blush: { speed: 0.98, pitch: 1.16 },
-  annoyed: { speed: 1.08, pitch: 1.06 },
-  surprised: { speed: 1.12, pitch: 1.32 },
+// reachable. en-US-AriaNeural is the locked-in primary: bright, youthful, and
+// natural. She NEVER changes mid-session — the voice is pinned to this one.
+const EDGE_VOICE = 'en-US-AriaNeural';
+// The anime-girl lift is applied by Edge itself via its SSML `pitch` (Hz),
+// so formants are preserved and it sounds like a real young woman — not a
+// resampled chipmunk. BASE_PITCH_HZ is the neutral-register lift; each
+// emotion rides a small offset around it in VOICE_PRESETS.
+const BASE_PITCH_HZ = 45;
+// Per-character voice register. Each model profile raises/lowers this from
+// app.js via setTTSBasePitch (a male model sits ~20Hz, a gentle one ~40Hz),
+// so every persona sounds like a different person without resampling.
+let ttsBasePitchHz = BASE_PITCH_HZ;
+window.setTTSBasePitch = function (hz) {
+  ttsBasePitchHz = Number.isFinite(hz) ? hz : BASE_PITCH_HZ;
+};
+// Per-emotion SSML pitch offsets (Hz) around BASE_PITCH_HZ. Edge adds these to
+// its own SSML so the formants stay intact — the shift reads as "same girl,
+// different mood" (happy/startled brighter, annoyed deeper) instead of a
+// resampled different voice.
+const EMOTION_PITCH_HZ = {
+  neutral: 0,
+  happy: 8,
+  blush: -5,
+  annoyed: -9,
+  surprised: 11,
 };
 
-// Per-line natural variation: a small random jitter on top of the emotion
-// preset so consecutive lines never sound robotic/identical.
-const VOICE_JITTER_SPEED = 0.03;
-const VOICE_JITTER_PITCH = 0.02;
+// ---- Emotion-reactive voice presets ----
+// Each emotion shifts the generated tempo (rate%) and the SSML pitch so her
+// voice actually sounds happy, flustered, or annoyed instead of reading every
+// line in the same neutral tone. Applied in getVoicePreset(). The band is kept
+// tight (pitch ±~10Hz around BASE_PITCH_HZ, speed near-native) so she stays
+// recognizably the SAME girl in every mood — no random jitter, no wildly
+// different takes between consecutive lines.
+const VOICE_PRESETS = {
+  neutral: { speed: 1.04, pitch: 1.0 },
+  happy: { speed: 1.1, pitch: 1.06 },
+  blush: { speed: 0.98, pitch: 0.97 },
+  annoyed: { speed: 1.08, pitch: 0.93 },
+  surprised: { speed: 1.12, pitch: 1.09 },
+};
+
+// ---- User-tunable TTS config (settings panel) ----
+// Mirrors the settings panel controls and persists to localStorage. The
+// `epoch` counter increments on every change so the audio cache (below) keys
+// on it and discards stale renders instead of replaying old takes.
+const TTS_CONFIG_DEFAULTS = {
+  edgeVoice: EDGE_VOICE,
+  kokoroVoice: KOKORO_VOICE,
+  speed: 1.0, // global tempo multiplier applied on top of the emotion preset
+  pitchHz: 0, // global pitch offset (Hz) added around BASE_PITCH_HZ
+  muted: false, // real mute — suppresses all TTS output
+};
+const TTS_STORAGE_KEY = 'yuki_tts_config';
+
+function loadTTSConfig() {
+  try {
+    const raw = localStorage.getItem(TTS_STORAGE_KEY);
+    if (raw) return { ...TTS_CONFIG_DEFAULTS, ...JSON.parse(raw) };
+  } catch (e) { /* ignore corrupted storage */ }
+  return { ...TTS_CONFIG_DEFAULTS };
+}
+
+const ttsConfig = loadTTSConfig();
+let configEpoch = 0;
+
+// Reads the current config (copy) and persists any patch, bumping the epoch so
+// in-flight/cached audio invalidates. Returns the merged live config.
+window.getTTSConfig = function () {
+  return { ...ttsConfig };
+};
+
+window.saveTTSConfig = function (patch) {
+  Object.assign(ttsConfig, patch);
+  configEpoch += 1;
+  try {
+    localStorage.setItem(TTS_STORAGE_KEY, JSON.stringify(ttsConfig));
+  } catch (e) { /* ignore quota / private mode */ }
+  return { ...ttsConfig };
+};
+
+// ---- Per-text audio cache ----
+// Identical (engine, voice, text, rate, pitch) renders are reused instead of
+// re-hitting Edge TTS / Kokoro every time. The cache stores the PROMISE so
+// concurrent duplicate lines dedupe too. `configEpoch` in the key invalidates
+// everything when the user changes a voice/speed/pitch setting.
+const AUDIO_CACHE_MAX = 256;
+const audioCache = new Map();
+
+function audioCacheKey(engine, voice, text, rateStr, pitchStr) {
+  return `${configEpoch}|${engine}|${voice}|${rateStr}|${pitchStr}|${text}`;
+}
+
+function audioCacheGet(key) {
+  return audioCache.get(key);
+}
+
+function audioCacheSet(key, promise) {
+  if (audioCache.size >= AUDIO_CACHE_MAX) {
+    const oldest = audioCache.keys().next().value;
+    if (oldest !== undefined) audioCache.delete(oldest);
+  }
+  audioCache.set(key, promise);
+  promise.catch(() => {
+    if (audioCache.get(key) === promise) audioCache.delete(key);
+  });
+}
 
 function getVoicePreset(emotion) {
   const preset = VOICE_PRESETS[emotion] || VOICE_PRESETS.neutral;
   return {
-    speed: preset.speed + (Math.random() * 2 - 1) * VOICE_JITTER_SPEED,
-    pitch: preset.pitch + (Math.random() * 2 - 1) * VOICE_JITTER_PITCH,
+    speed: preset.speed * (ttsConfig.speed || 1),
+    pitch: preset.pitch,
   };
 }
 
@@ -65,14 +146,14 @@ function updateVoiceBadge() {
     el.textContent = window.voiceEngine;
     el.classList.toggle('kokoro', kokoro && !edge);
     el.title = edge
-      ? 'Edge neural TTS (' + EDGE_VOICE + ')'
+      ? 'Edge neural TTS (' + ttsConfig.edgeVoice + ')'
       : kokoro
-        ? 'Kokoro neural TTS (af_' + KOKORO_VOICE.slice(3) + ')'
+        ? 'Kokoro neural TTS (' + ttsConfig.kokoroVoice + ')'
         : 'Browser speechSynthesis';
   }
   console.log(
     '[tts] voice engine:',
-    edge ? 'EDGE (' + EDGE_VOICE + ')' : kokoro ? 'KOKORO (' + KOKORO_VOICE + ')' : 'BROWSER speechSynthesis'
+    edge ? 'EDGE (' + ttsConfig.edgeVoice + ')' : kokoro ? 'KOKORO (' + ttsConfig.kokoroVoice + ')' : 'BROWSER speechSynthesis'
   );
 }
 updateVoiceBadge();
@@ -129,7 +210,6 @@ function getTTSAnalyser() {
     ttsAnalyser.smoothingTimeConstant = 0.4;
     ttsAnalyser.connect(getTTSGainNode());
     window.__lipAnalyser = ttsAnalyser;
-    window.__lipData = new Uint8Array(ttsAnalyser.frequencyBinCount);
   }
   return ttsAnalyser;
 }
@@ -238,12 +318,16 @@ window.preloadKokoroInBackground = function () {
 // Generates audio using Kokoro (inside the worker) and returns an AudioBuffer
 // (or null on any failure, so callers fall back to browser TTS).
 // `emotion` picks the voice preset's tempo; `voice` overrides the base voice.
-window.generateKokoroAudioBuffer = function (text, emotion, voice = KOKORO_VOICE) {
+window.generateKokoroAudioBuffer = function (text, emotion, voice = ttsConfig.kokoroVoice) {
   if (!window.isKokoroReady || !ttsWorker) return Promise.resolve(null);
 
-  const speed = getVoicePreset(emotion).speed;
+  const preset = getVoicePreset(emotion);
+  const speed = preset.speed;
+  const key = audioCacheKey('kokoro', voice, text, 'r' + Math.round(speed * 100), 'p0');
+  const cached = audioCacheGet(key);
+  if (cached) return cached;
 
-  return new Promise((resolve, reject) => {
+  const promise = new Promise((resolve, reject) => {
     const id = ++workerIdCounter;
     workerPending.set(id, { resolve, reject });
     ttsWorker.postMessage({ type: 'generate', id, text, voice, speed });
@@ -259,31 +343,50 @@ window.generateKokoroAudioBuffer = function (text, emotion, voice = KOKORO_VOICE
       console.warn('[tts] Kokoro generation failed:', err && err.message ? err.message : err);
       return null;
     });
+
+  audioCacheSet(key, promise);
+  return promise;
 };
 
 // Edge TTS first (much more natural voice, synthesized by the backend from
 // Microsoft's free neural voices), Kokoro as the offline/error fallback, then
 // null (callers drop to browser speechSynthesis). Returns an AudioBuffer.
-// The emotion preset's TEMPO is baked in via the Edge `rate`; its PITCH is left
-// for playAudioBuffer's detune so both engines are shifted the same way.
-window.generateTTSAudioBuffer = async function (text, emotion, voice = KOKORO_VOICE) {
+// Both the emotion preset's TEMPO (rate%) and PITCH (Hz, formant-preserved by
+// Edge) are baked into the SSML, so playback needs no client-side resampling —
+// the same girl every line, just slightly faster/brighter per emotion.
+window.generateTTSAudioBuffer = async function (text, emotion, voice = ttsConfig.kokoroVoice) {
   if (!text) return null;
+  if (ttsConfig.muted) return null;
 
   const preset = getVoicePreset(emotion);
   const rate = Math.round((preset.speed - 1) * 100);
   const rateStr = (rate >= 0 ? '+' : '') + rate + '%';
+  const pitchHz = ttsBasePitchHz + (ttsConfig.pitchHz || 0) + (EMOTION_PITCH_HZ[emotion] || 0);
+  const pitchStr = '+' + Math.round(pitchHz) + 'Hz';
 
-  const edgeBuffer = await generateEdgeAudioBuffer(text, rateStr);
-  if (edgeBuffer) return edgeBuffer;
-  return generateKokoroAudioBuffer(text, emotion, voice);
+  const edgeKey = audioCacheKey('edge', ttsConfig.edgeVoice, text, rateStr, pitchStr);
+  const edgeCached = audioCacheGet(edgeKey);
+  if (edgeCached) return edgeCached;
+
+  // The cached promise must resolve to the FULL fallback chain (Edge, then
+  // Kokoro). generateEdgeAudioBuffer resolves to null on failure instead of
+  // rejecting, so caching just the Edge call would permanently pin a null
+  // result — identical text would then skip Kokoro and always hit browser TTS.
+  const promise = (async () => {
+    const edgeBuffer = await generateEdgeAudioBuffer(text, rateStr, pitchStr);
+    if (edgeBuffer) return edgeBuffer;
+    return generateKokoroAudioBuffer(text, emotion, voice);
+  })();
+  audioCacheSet(edgeKey, promise);
+  return promise;
 };
 
-async function generateEdgeAudioBuffer(text, rateStr) {
+async function generateEdgeAudioBuffer(text, rateStr, pitchStr) {
   try {
-    const res = await fetch('/api/tts', {
+    const res = await fetch((window.BACKEND_URL || '') + '/api/tts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, voice: EDGE_VOICE, rate: rateStr, pitch: '+0Hz' }),
+      body: JSON.stringify({ text, voice: ttsConfig.edgeVoice, rate: rateStr, pitch: pitchStr }),
     });
     if (!res.ok) {
       console.warn('[tts] Edge TTS rejected:', res.status, res.statusText);
@@ -409,8 +512,11 @@ function buildPolishChain(source, analyser) {
   };
 }
 
-// `callbacks.distort` is the demon-voice intensity (0..1). When > 0 the source
-// is pitched down, bit-crushed, and filtered so her voice sounds possessed.
+// Plays a buffer through the analyser. Lip-sync and emotion are tied to the
+// audio lifecycle: `onStart` fires in the same frame as `source.start()`,
+// `onEnd` fires on `onended`, and the flags drive Pixi's ticker.
+// Pitch/tempo now live entirely in the generated audio (Edge SSML), so the
+// chain here is only the polish EQ/reverb/compressor — no client resampling.
 window.playAudioBuffer = function (buffer, callbacks = {}) {
   if (!buffer) return false;
 
@@ -428,81 +534,16 @@ window.playAudioBuffer = function (buffer, callbacks = {}) {
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     const analyser = getTTSAnalyser();
+    const polish = buildPolishChain(source, analyser);
 
-    const intensity = Math.min(1, Math.max(0, Number(callbacks.distort) || 0));
-    if (intensity > 0) {
-      // 1) Pitch down: the deeper her anger, the lower she drops.
-      const pitch = 1 - 0.5 * intensity; // 1.0 -> 0.5 (up to an octave down)
-      source.playbackRate.value = pitch;
-
-      // 2) Bit-crush: quantize amplitude harder at higher intensity.
-      const shaper = ctx.createWaveShaper();
-      const bits = Math.max(2, Math.round(4 - 2 * intensity)); // 4 -> 2 bits
-      const steps = Math.pow(2, bits);
-      const curve = new Float32Array(1024);
-      for (let i = 0; i < curve.length; i++) {
-        const x = (i / (curve.length - 1)) * 2 - 1;
-        curve[i] = Math.round(x * steps) / steps;
-      }
-      shaper.curve = curve;
-      shaper.oversample = '4x';
-
-      // 3) Resonant lowpass: darkens + howls, softened a touch by Q.
-      const filter = ctx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.value = 900 + 1500 * intensity;
-      filter.Q.value = 4 + 6 * intensity;
-
-      // 4) Ring-mod tremolo: wobbly "possessed" shimmer at higher intensity.
-      let lfo = null;
-      if (intensity > 0.55) {
-        lfo = ctx.createOscillator();
-        lfo.frequency.value = 4 + 10 * (intensity - 0.55);
-        const lfoGain = ctx.createGain();
-        lfoGain.gain.value = 0.3 * intensity;
-        const ring = ctx.createGain();
-        ring.gain.value = 1;
-        lfo.connect(lfoGain);
-        lfoGain.connect(ring.gain);
-        filter.connect(ring);
-        ring.connect(analyser);
-        lfo.start();
-      } else {
-        filter.connect(analyser);
-      }
-
-      source.connect(shaper);
-      shaper.connect(filter);
-
-      source.onended = () => {
-        window.__isSpeaking = false;
-        window.__isAnalyserSpeaking = false;
-        if (currentAudioSource === source) currentAudioSource = null;
-        try { source.disconnect(); } catch (e) { /* ignore */ }
-        try { shaper.disconnect(); } catch (e) { /* ignore */ }
-        try { filter.disconnect(); } catch (e) { /* ignore */ }
-        if (lfo) {
-          try { lfo.stop(); } catch (e) { /* ignore */ }
-          try { lfo.disconnect(); } catch (e) { /* ignore */ }
-        }
-        if (callbacks.onEnd) callbacks.onEnd();
-      };
-    } else {
-      // Emotion-reactive pitch shift via detune (cents) so her voice rises
-      // and falls WITHOUT warping the tempo — playbackRate would speed up or
-      // drag the speech with the pitch. Falls back to the base feminine lift.
-      const pitch = Number(callbacks.pitch) > 0 ? callbacks.pitch : VOICE_PITCH;
-      if (pitch !== 1) source.detune.value = 1200 * Math.log2(pitch);
-      const polish = buildPolishChain(source, analyser);
-      source.onended = () => {
-        window.__isSpeaking = false;
-        window.__isAnalyserSpeaking = false;
-        if (currentAudioSource === source) currentAudioSource = null;
-        try { source.disconnect(); } catch (e) { /* ignore */ }
-        polish.dispose();
-        if (callbacks.onEnd) callbacks.onEnd();
-      };
-    }
+    source.onended = () => {
+      window.__isSpeaking = false;
+      window.__isAnalyserSpeaking = false;
+      if (currentAudioSource === source) currentAudioSource = null;
+      try { source.disconnect(); } catch (e) { /* ignore */ }
+      polish.dispose();
+      if (callbacks.onEnd) callbacks.onEnd();
+    };
 
     currentAudioSource = source;
     window.__isSpeaking = true;

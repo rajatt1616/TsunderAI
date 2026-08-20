@@ -5,7 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
   <title>Animated AI Waifu Simulator</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='13'%3E%F0%9F%92%96%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="style.css?v=4" />
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <style type="text/tailwindcss">
+    @layer theme, base, components, utilities;
+    @import "tailwindcss/theme.css" layer(theme);
+    @import "tailwindcss/utilities.css" layer(utilities);
+  </style>
 </head>
 <body>
   <div class="app">
@@ -29,6 +36,10 @@
         <button type="button" class="dock-btn" data-cmd="/dance" title="Force her to dance">
           <span class="dock-icon">&#127925;</span>
           <span class="dock-label">Dance</span>
+        </button>
+        <button type="button" class="dock-btn" data-cmd="/shop" title="Open the gift shop">
+          <span class="dock-icon">&#127873;</span>
+          <span class="dock-label">Gifts</span>
         </button>
       </div>
 
@@ -59,6 +70,16 @@
         <span class="voice-badge" id="voice-badge" title="TTS engine">…</span>
       </div>
 
+      <!-- Character / model switcher -->
+      <div class="model-switcher" id="model-switcher">
+        <button type="button" class="model-trigger" id="model-trigger" title="Switch character">
+          <span class="model-trigger-thumb" id="model-current-thumb"></span>
+          <span class="model-trigger-label" id="model-current">Yuki</span>
+          <span class="room-caret">&#9662;</span>
+        </button>
+        <div class="model-menu" id="model-menu" hidden></div>
+      </div>
+
       <!-- Room background switcher -->
       <div class="room-switcher" id="room-switcher">
         <button type="button" class="room-trigger" id="room-trigger">
@@ -69,7 +90,81 @@
         <div class="room-menu" id="room-menu" hidden></div>
       </div>
 
+      <!-- Settings gear button (opens the settings panel) -->
+      <button type="button" class="settings-gear" id="settings-gear" title="Settings" aria-label="Settings">&#9881;</button>
+      <div class="settings-modal" id="settings-modal">
+        <div class="settings-panel">
+          <header class="settings-header">
+            <span>&#9881; Settings</span>
+            <button class="settings-close" id="settings-close" type="button" aria-label="Close settings">&#10005;</button>
+          </header>
+          <div class="settings-body">
+            <section class="settings-group">
+              <h3>Voice</h3>
+              <label class="settings-row">
+                <span>Edge voice</span>
+                <select id="settings-edge-voice"></select>
+              </label>
+              <label class="settings-row">
+                <span>Kokoro voice</span>
+                <select id="settings-kokoro-voice"></select>
+              </label>
+            </section>
+            <section class="settings-group">
+              <h3>Speech</h3>
+              <label class="settings-row">
+                <span>Speed <em id="settings-speed-val">1.0x</em></span>
+                <input type="range" id="settings-speed" min="0.6" max="1.6" step="0.05" value="1.0" />
+              </label>
+              <label class="settings-row">
+                <span>Pitch <em id="settings-pitch-val">+0Hz</em></span>
+                <input type="range" id="settings-pitch" min="-20" max="20" step="1" value="0" />
+              </label>
+              <label class="settings-row">
+                <span>Mute voice</span>
+                <input type="checkbox" id="settings-mute" />
+              </label>
+            </section>
+            <section class="settings-group">
+              <h3>Room</h3>
+              <div class="settings-room-grid" id="settings-room-grid"></div>
+            </section>
+            <section class="settings-group">
+              <h3>Model</h3>
+              <div class="settings-model-grid" id="settings-model-grid"></div>
+            </section>
+            <section class="settings-group">
+              <h3>Memory</h3>
+              <div class="settings-memory-list" id="settings-memory-list"></div>
+              <p class="settings-memory-empty" id="settings-memory-empty">
+                Nothing to remember yet. Tell her your name, birthday, or likes and she'll hold onto them.
+              </p>
+            </section>
+          </div>
+        </div>
+      </div>
+
       <div id="popup-container"></div>
+
+      <!-- Gift Shop modal (Tailwind v4 utilities, dark neon theme) -->
+      <div id="gift-shop-modal" class="fixed inset-0 z-[110]" hidden>
+        <div class="flex h-full w-full items-center justify-center">
+          <div class="absolute inset-0 bg-black/70 backdrop-blur-sm" id="gift-shop-backdrop"></div>
+          <div class="gs-panel relative w-[min(680px,calc(100vw-32px))] max-h-[85vh] overflow-hidden rounded-2xl border border-pink-400/30 bg-[#121622] shadow-[0_0_60px_rgba(255,126,179,0.25)]">
+            <header class="gs-header flex items-center justify-between border-b border-white/10 bg-gradient-to-r from-pink-500/15 via-transparent to-indigo-500/15">
+              <h2 class="text-lg font-extrabold tracking-wide text-pink-300 drop-shadow">🎁 GIFT SHOP</h2>
+              <button type="button" id="gift-shop-close" class="grid h-8 w-8 place-items-center rounded-full border border-white/15 bg-white/5 text-slate-300 transition hover:border-pink-400 hover:text-white">✕</button>
+            </header>
+            <div class="gs-balance flex items-center justify-between border-b border-white/5 bg-white/5">
+              <span class="text-xs font-semibold uppercase tracking-widest text-slate-400">Your wallet</span>
+              <span class="text-lg font-black text-emerald-300" id="gift-shop-wallet">$0</span>
+            </div>
+            <div class="gs-scroll max-h-[calc(85vh-138px)] overflow-y-auto">
+              <div class="gs-grid grid grid-cols-2 sm:grid-cols-3" id="gift-shop-grid"></div>
+            </div>
+          </div>
+        </div>
+      </div>
       <div id="gacha-toast-container"></div>
 
       <div class="victory-modal" id="victory-modal">
@@ -125,9 +220,9 @@
 <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display/dist/index.min.js"></script>
 
 <!-- 5. TTS + Lip-Sync Engine (Kokoro local TTS in a Web Worker + analyser, browser TTS fallback) -->
-<script src="tts.js"></script>
+<script src="tts.js?v=2"></script>
 
 <!-- 6. Your Main Application Logic -->
-<script src="app.js"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

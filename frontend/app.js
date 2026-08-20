@@ -1,10 +1,25 @@
-const BACKEND_URL = '';
+// When the backend serves the frontend (default, port 8000) the API is
+// same-origin and empty-string relative URLs work. When the frontend is served
+// standalone via `python serve.py` (port 5500), point at the backend explicitly
+// so chat/TTS still resolve instead of 404ing on the static server.
+const BACKEND_URL = (() => {
+  try {
+    const port = window.location.port;
+    return port && port !== '8000' ? 'http://localhost:8000' : '';
+  } catch (e) {
+    return '';
+  }
+})();
+window.BACKEND_URL = BACKEND_URL;
 const WAIFU_NAME = 'Yuki';
 const MODEL_FIT = 0.73;
 const LIP_SYNC_INTERVAL_MS = 100;
 const LIP_SYNC_MAX_OPEN = 0.8;
 const LIP_SYNC_SENSITIVITY = 1.8;
 const LIP_SYNC_LERP = 0.35;
+const LIP_SYNC_ATTACK = 0.6; // how fast the mouth opens on voice onset
+const LIP_SYNC_RELEASE = 0.12; // how fast it decays between syllables
+const LIP_SYNC_FLOOR = 0.02; // below this RMS the mouth is considered closed
 const FOCUS_SPEED = 16;
 
 const LATE_NIGHT_INTERROGATIONS = [
@@ -28,6 +43,23 @@ const BODY_REACTIONS = [
   { text: "Hey! That's personal space!", emotion: "surprised" },
   { text: "Don't touch me so casually!", emotion: "annoyed" }
 ];
+
+// Mark (male/hype best friend) has his own tap reactions so the pools stay
+// in-character for whichever companion is on stage.
+const MARK_HEADPAT_REACTIONS = [
+  { text: "Haha, yeah! Right there! You know what's up!", emotion: "happy" },
+  { text: "Man, that actually feels kinda good. Don't tell anyone!", emotion: "happy" },
+  { text: "Messin' up the hair, huh? Bold move, I respect it.", emotion: "happy" },
+];
+const MARK_BODY_REACTIONS = [
+  { text: "Whoa whoa, personal space, buddy!", emotion: "surprised" },
+  { text: "Hey, I'm a guy of action, not touchy-feely stuff!", emotion: "annoyed" },
+  { text: "C'mon, save that energy for the hangout!", emotion: "annoyed" },
+];
+
+// Tap cooldown so spam can't farm hearts or spam her reactions.
+const TAP_COOLDOWN_MS = 3000;
+let lastTapTime = 0;
 
 const DIZZY_REACTIONS = [
   "STOP SPINNING ME AROUND! Ugh... the whole room is spinning...",
@@ -97,8 +129,7 @@ const EMOTION_PARAMS = {
 
 const MODEL_URLS = [
   'models/Hiyori/Hiyori.model3.json',
-  'https://raw.githubusercontent.com/Live2D/CubismWebSamples/develop/Samples/Resources/Natori/Natori.model3.json',
-  'https://raw.githubusercontent.com/Live2D/CubismWebSamples/develop/Samples/Resources/Mark/Mark.model3.json',
+  'models/Mark/Mark.model3.json',
 ];
 
 const canvas = document.getElementById('live2d-canvas');
@@ -520,6 +551,8 @@ function spawnGachaToast(item, rarity, isFinal = false) {
 function updateGachaMoney() {
   const el = document.getElementById('gacha-money');
   if (el) el.textContent = `$${gachaMoney}`;
+  const wallet = document.getElementById('gift-shop-wallet');
+  if (wallet) wallet.textContent = `$${gachaMoney}`;
 }
 
 // Award gacha money based on hearts earned. Positive affection changes
@@ -530,6 +563,148 @@ function awardMoneyForHearts(changeDelta) {
   totalHeartsEarned += delta;
   gachaMoney += delta * MONEY_PER_HEART;
   updateGachaMoney();
+}
+
+// ---- Gift Shop ----
+// Spend gacha money to buy gifts. Each one is a money SINK: she reacts with a
+// heart boost and a character-appropriate line, but the purchase never pays
+// the user back (updateHeartHUD is called with skipMoneyAward=true).
+const GIFT_ITEMS = [
+  { id: 'latte', emoji: '☕', name: 'Handmade Latte', price: 15, desc: 'A cozy latte with a heart in the foam.',
+    reactions: { yuki: { delta: 4, emotion: 'neutral', text: "It's not like I wanted caffeine... but thanks, I guess." },
+                 mark: { delta: 4, emotion: 'happy', text: 'Coffee?! You know me way too well, dude!' } } },
+  { id: 'rose', emoji: '🌹', name: 'Single Red Rose', price: 20, desc: 'A classic. Timeless. Slightly embarrassing.',
+    reactions: { yuki: { delta: 6, emotion: 'blush', text: 'A rose... for me? Hmph. It\'s not bad, I suppose.' },
+                 mark: { delta: 6, emotion: 'surprised', text: 'A rose for me? Bro, that\'s too much! ...I love it.' } } },
+  { id: 'poetry', emoji: '📖', name: 'Poetry Book', price: 35, desc: 'Soft pages, sad poems, big feelings.',
+    reactions: { yuki: { delta: 10, emotion: 'neutral', text: "Poetry... I'll read it when I'm alone. Don't watch me do it." },
+                 mark: { delta: 10, emotion: 'happy', text: 'A poetry book? Bold move. I\'ll only read it out loud when you\'re gone!' } } },
+  { id: 'plushie', emoji: '🧸', name: 'Plushie Bear', price: 45, desc: 'Small, soft, and impossible to stay mad at.',
+    reactions: { yuki: { delta: 12, emotion: 'happy', text: 'I... I\'ll treasure it. Not because you gave it to me or anything.' },
+                 mark: { delta: 12, emotion: 'happy', text: 'A plush bear! This is going right on my bed. Thanks, dude!' } } },
+  { id: 'art', emoji: '🎨', name: 'Art Supplies', price: 50, desc: 'Paint, brushes, and quiet ambition.',
+    reactions: { yuki: { delta: 13, emotion: 'happy', text: 'Paint... maybe I\'ll draw something for you. Maybe.' },
+                 mark: { delta: 13, emotion: 'happy', text: 'Art supplies? I\'ve been dying to doodle! You\'re the best!' } } },
+  { id: 'headphones', emoji: '🎧', name: 'Noise-Cancelling Headphones', price: 60, desc: 'For tuning out the whole world.',
+    reactions: { yuki: { delta: 15, emotion: 'neutral', text: "Headphones... so I can tune out the world. Fits me, doesn't it?" },
+                 mark: { delta: 15, emotion: 'happy', text: 'Headphones! Now I can vibe in peace. You spoil me!' } } },
+  { id: 'chocolate', emoji: '🍫', name: 'Luxury Chocolate Box', price: 70, desc: 'Rich, dark, and dangerously sweet.',
+    reactions: { yuki: { delta: 18, emotion: 'blush', text: "Sweet... too sweet. Like you. Hmph." },
+                 mark: { delta: 18, emotion: 'happy', text: 'Chocolate?! Man, my teeth are gonna hate you. Worth it!' } } },
+  { id: 'scarf', emoji: '🧣', name: 'Designer Scarf', price: 80, desc: 'Warm, soft, and fits her perfectly.',
+    reactions: { yuki: { delta: 20, emotion: 'blush', text: "A scarf... it's warm. Almost as warm as you. Don't tell anyone." },
+                 mark: { delta: 20, emotion: 'happy', text: 'A designer scarf?! I\'m gonna wear this everywhere!' } } },
+  { id: 'concert', emoji: '🎫', name: 'Concert Tickets', price: 100, desc: 'Two seats. One very special night.',
+    reactions: { yuki: { delta: 24, emotion: 'happy', text: "Tickets... to a concert? You'd really take me? Idiot. I love it." },
+                 mark: { delta: 24, emotion: 'happy', text: 'CONCERT TICKETS?! We\'re going together, no argument!' } } },
+  { id: 'ring', emoji: '💍', name: 'Silver Ring', price: 120, desc: 'The grand gesture. No pressure.',
+    reactions: { yuki: { delta: 28, emotion: 'blush', text: "A ring... you idiot. What am I supposed to say to that? ...Thank you." },
+                 mark: { delta: 28, emotion: 'surprised', text: 'A ring?! Bro, we\'re gonna be best friends forever. Promise.' } } },
+];
+
+let giftBuying = false;
+
+function giftReactionFor(item) {
+  const id = currentProfile && currentProfile.id;
+  return item.reactions[id] || item.reactions.yuki;
+}
+
+function openGiftShop() {
+  const modal = document.getElementById('gift-shop-modal');
+  if (!modal) return;
+  renderGiftShop();
+  modal.hidden = false;
+}
+
+function closeGiftShop() {
+  const modal = document.getElementById('gift-shop-modal');
+  if (modal) modal.hidden = true;
+}
+
+function renderGiftShop() {
+  const grid = document.getElementById('gift-shop-grid');
+  const wallet = document.getElementById('gift-shop-wallet');
+  if (!grid) return;
+  if (wallet) wallet.textContent = `$${gachaMoney}`;
+  grid.innerHTML = '';
+  for (const item of GIFT_ITEMS) {
+    const react = giftReactionFor(item);
+    const affordable = gachaMoney >= item.price;
+    const card = document.createElement('div');
+    card.className =
+      'gs-card flex flex-col rounded-xl border border-white/10 bg-white/5 transition hover:border-pink-400/60 hover:bg-white/10';
+    card.innerHTML = `
+      <div class="gs-card-emoji text-3xl leading-none">${item.emoji}</div>
+      <div class="text-sm font-extrabold text-white">${item.name}</div>
+      <div class="gs-card-desc text-[11px] leading-snug text-slate-400">${item.desc}</div>
+      <div class="gs-card-meta flex items-center justify-between">
+        <span class="text-xs font-black text-emerald-300">$${item.price}</span>
+        <span class="text-xs font-bold text-pink-300">+${react.delta} ❤️</span>
+      </div>
+      <button type="button" data-gift="${item.id}" ${affordable ? '' : 'disabled'}
+        class="gs-card-buy rounded-lg text-xs font-extrabold transition ${
+          affordable
+            ? 'bg-pink-500 text-white hover:bg-pink-400 active:scale-95'
+            : 'cursor-not-allowed bg-white/10 text-slate-500'
+        }">
+        ${affordable ? 'Buy' : 'Not enough'}
+      </button>`;
+    grid.appendChild(card);
+  }
+}
+
+// Buy a gift: deduct money, play her reaction (TTS + expression + floating
+// heart delta via updateHeartHUD), and route the affection gain through
+// /adjust so the backend stays the source of truth.
+async function buyGift(itemId) {
+  const item = GIFT_ITEMS.find((g) => g.id === itemId);
+  if (!item || giftBuying) return;
+
+  if (gachaMoney < item.price) {
+    const isMark = currentProfile && currentProfile.id === 'mark';
+    const broke = isMark
+      ? "Ha! You're broke, dude. Come back when the wallet's got some life."
+      : "Hmph. Empty pockets again? Go earn some money first, idiot.";
+    setDialogue(broke);
+    speakResponse(broke, 'annoyed');
+    return;
+  }
+
+  giftBuying = true;
+  try {
+    gachaMoney -= item.price;
+    updateGachaMoney();
+
+    const react = giftReactionFor(item);
+    setDialogue(react.text);
+    setYukiExpression(react.emotion);
+    window.setTimeout(() => setYukiExpression('neutral'), 3500);
+
+    let audioBuffer = null;
+    if (window.generateTTSAudioBuffer && window.ttsReady) {
+      try {
+        audioBuffer = await window.generateTTSAudioBuffer(react.text, react.emotion);
+      } catch (e) {
+        console.warn('[waifu] gift TTS failed', e);
+      }
+    }
+    speakResponse(react.text, react.emotion, audioBuffer);
+
+    const res = await fetch(`${BACKEND_URL}/adjust`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ delta: react.delta }),
+    });
+    const data = await res.json();
+    if (data && typeof data.total_affection === 'number') {
+      updateHeartHUD(data.total_affection, data.affection_change, data.combo_active, true);
+    }
+    renderGiftShop();
+  } catch (err) {
+    console.warn('[waifu] gift buy failed', err);
+  } finally {
+    giftBuying = false;
+  }
 }
 
 // ---- Mute her voice (trap button) ----
@@ -620,7 +795,7 @@ async function threatenDelete() {
   speakResponse(text, emotion, audioBuffer);
 }
 
-function updateHeartHUD(totalScore, changeDelta, comboActive) {
+function updateHeartHUD(totalScore, changeDelta, comboActive, skipMoneyAward) {
   const n = Number(totalScore);
   const score = Number.isFinite(n) ? Math.max(-100, Math.min(100, n)) : 20;
   window.currentAffection = score;
@@ -644,6 +819,7 @@ function updateHeartHUD(totalScore, changeDelta, comboActive) {
   const tierLevel = tierLevelFor(score);
   if (tierLevel > lastTierLevel) {
     triggerHeartExplosion(25);
+    for (let l = lastTierLevel + 1; l <= tierLevel; l++) handleTierUnlock(l);
   }
   lastTierLevel = tierLevel;
 
@@ -663,7 +839,9 @@ function updateHeartHUD(totalScore, changeDelta, comboActive) {
     if (delta <= -5) {
       triggerScreenShake(Math.min(16, 8 + Math.abs(delta)), 450);
     }
-    if (isPositive) awardMoneyForHearts(delta);
+    // Buying a gift is a money SINK: she reacts with affection but doesn't
+    // pay the user back, so skip the money award for that path.
+    if (isPositive && !skipMoneyAward) awardMoneyForHearts(delta);
   }
 
   checkVictory(score);
@@ -704,6 +882,44 @@ const ROOM_PRESETS = {
   rooftop: 'rooms/rooftop.png',
 };
 
+// Rooms hidden until an affection tier is reached (`tier` = tierLevelFor level).
+// The sunset variant reuses the rooftop art with a warm tint (body.warm-room).
+const UNLOCK_ROOMS = {
+  sunset: { tier: 2, img: 'rooms/rooftop.png', name: 'Sunset Rooftop', variant: 'warm-room' },
+};
+
+// Unlocked affection tiers persist in localStorage so progression isn't lost
+// on a reload (lightweight — no full state persistence).
+const UNLOCK_STORAGE_KEY = 'tsunderai_unlocks';
+
+function getUnlockedTiers() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(UNLOCK_STORAGE_KEY) || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function unlockTier(level) {
+  const tiers = getUnlockedTiers();
+  if (!tiers.includes(level)) {
+    tiers.push(level);
+    localStorage.setItem(UNLOCK_STORAGE_KEY, JSON.stringify(tiers));
+  }
+}
+
+// Room ids available right now: base presets + any tier-locked rooms the user
+// has unlocked. Shared by the room dropdown and the settings grid.
+function getAvailableRooms() {
+  const ids = Object.keys(ROOM_PRESETS);
+  const tiers = getUnlockedTiers();
+  for (const id of Object.keys(UNLOCK_ROOMS)) {
+    if (tiers.includes(UNLOCK_ROOMS[id].tier)) ids.push(id);
+  }
+  return ids;
+}
+
 let currentRoom = null;
 
 // Room-scene model fit tweaks: slightly larger scale + grounded y-offset so
@@ -711,13 +927,15 @@ let currentRoom = null;
 const ROOM_MODEL_SCALE = 1.06;
 const ROOM_MODEL_Y_OFFSET = 10;
 
-function setCustomBackground(url) {
+function setCustomBackground(url, variantClass) {
   document.documentElement.style.setProperty('--room-scene', `url("${url}")`);
   document.body.classList.add('room-scene');
+  if (variantClass) document.body.classList.add(variantClass);
 }
 
 function clearCustomBackground() {
   document.body.classList.remove('room-scene');
+  document.body.classList.remove('warm-room');
   document.documentElement.style.removeProperty('--room-scene');
 }
 
@@ -738,6 +956,10 @@ function setRoomByName(id) {
   } else if (ROOM_PRESETS[id]) {
     currentRoom = id;
     setCustomBackground(ROOM_PRESETS[id]);
+  } else if (UNLOCK_ROOMS[id]) {
+    const r = UNLOCK_ROOMS[id];
+    currentRoom = id;
+    setCustomBackground(r.img, r.variant);
   } else {
     return false;
   }
@@ -758,28 +980,35 @@ function updateRoomSwitcherUI() {
   });
 }
 
-// Builds the dropdown from ROOM_PRESETS + the default mood lighting. Options
-// show a live thumbnail of each wallpaper.
+// Builds the dropdown from ROOM_PRESETS + unlocked rooms. Options show a live
+// thumbnail of each wallpaper. `render` is re-run after an unlock so newly
+// available rooms appear without a reload.
 function setupRoomSwitcher() {
   const trigger = document.getElementById('room-trigger');
   const menu = document.getElementById('room-menu');
   if (!trigger || !menu) return;
 
-  const rooms = [
-    { id: 'default', name: 'Default' },
-    ...Object.keys(ROOM_PRESETS).map((id) => ({ id, name: id[0].toUpperCase() + id.slice(1) })),
-  ];
+  const roomName = (id) => (UNLOCK_ROOMS[id] ? UNLOCK_ROOMS[id].name : id[0].toUpperCase() + id.slice(1));
+  const roomImage = (id) => ROOM_PRESETS[id] || (UNLOCK_ROOMS[id] && UNLOCK_ROOMS[id].img) || '';
 
-  menu.innerHTML = rooms
-    .map((r) => {
-      const preview = r.id !== 'default' ? ROOM_PRESETS[r.id] : '';
-      const style = preview ? ` style="--thumb: url('${preview}')"` : '';
-      return `<button type="button" class="room-option" data-room="${r.id}"${style}>
-        <span class="room-thumb"></span>
-        <span class="room-opt-label">${r.name}</span>
-      </button>`;
-    })
-    .join('');
+  const render = () => {
+    const rooms = [
+      { id: 'default', name: 'Default' },
+      ...getAvailableRooms().map((id) => ({ id, name: roomName(id) })),
+    ];
+    menu.innerHTML = rooms
+      .map((r) => {
+        const preview = roomImage(r.id);
+        const style = preview ? ` style="--thumb: url('${preview}')"` : '';
+        return `<button type="button" class="room-option" data-room="${r.id}"${style}>
+          <span class="room-thumb"></span>
+          <span class="room-opt-label">${r.name}</span>
+        </button>`;
+      })
+      .join('');
+  };
+
+  render();
 
   const toggle = (open) => {
     menu.hidden = !open;
@@ -803,7 +1032,399 @@ function setupRoomSwitcher() {
     if (e.key === 'Escape') toggle(false);
   });
 
+  // Re-render after an unlock so the new room shows up immediately.
+  window.__refreshRoomOptions = () => {
+    render();
+    updateRoomSwitcherUI();
+  };
+
   updateRoomSwitcherUI();
+}
+
+// ---- Settings panel (gear) ----
+// Editable TTS config (Edge/Kokoro voice, speed, pitch, mute), room picker,
+// and model picker. Persists through window.saveTTSConfig / localStorage.
+const EDGE_VOICES = [
+  'en-US-AriaNeural', 'en-US-JennyNeural', 'en-US-MichelleNeural', 'en-US-GuyNeural',
+  'en-GB-SoniaNeural', 'en-GB-RyanNeural', 'en-AU-NatashaNeural', 'en-IN-NeerjaNeural',
+  'ja-JP-NanamiNeural', 'ko-KR-SunHiNeural', 'zh-CN-XiaoxiaoNeural',
+];
+const KOKORO_VOICES = ['af_heart', 'af_sky', 'af_bella', 'af_jessica', 'af_aoede', 'am_fenrir', 'am_michael', 'am_puck', 'am_adam'];
+
+// Each selectable companion bundles a Live2D model, a backend persona id, and
+// the TTS voice that matches that personality. Switching models applies the
+// whole profile: new model, new system prompt persona, new Edge/Kokoro voice,
+// and a new base pitch register.
+const MODEL_PROFILES = [
+  {
+    id: 'yuki',
+    name: 'Yuki',
+    modelUrl: 'models/Hiyori/Hiyori.model3.json',
+    thumb: 'models/Hiyori/Hiyori.2048/texture_00.png',
+    personality: 'tsundere',
+    tagline: 'Tsundere · sharp, secretly sweet',
+    switchLine: "...Hmph. A different me now? Don't get used to it.",
+    edgeVoice: 'en-US-AriaNeural',
+    kokoroVoice: 'af_sky',
+    basePitchHz: 45,
+  },
+  {
+    id: 'mark',
+    name: 'Mark',
+    modelUrl: 'models/Mark/Mark.model3.json',
+    thumb: 'models/Mark/Mark.2048/texture_00.png',
+    personality: 'energetic',
+    tagline: 'Energetic · hype & loyal',
+    switchLine: "Yo! New look, same me. Let's gooo!",
+    edgeVoice: 'en-US-GuyNeural',
+    kokoroVoice: 'am_fenrir',
+    basePitchHz: 20,
+  },
+];
+
+let currentProfile = null;
+
+function getProfileForModel(url) {
+  return MODEL_PROFILES.find((p) => p.modelUrl === url) || null;
+}
+
+// Applies a model profile's voice/branding. TTS config persists, the base
+// pitch register changes, and the settings voice dropdowns resync.
+function applyModelProfile(profile) {
+  if (!profile) return;
+  currentProfile = profile;
+  if (chatField) chatField.placeholder = `Talk to ${profile.name}...`;
+  if (window.saveTTSConfig) {
+    window.saveTTSConfig({
+      edgeVoice: profile.edgeVoice,
+      kokoroVoice: profile.kokoroVoice,
+    });
+  }
+  if (window.setTTSBasePitch) window.setTTSBasePitch(profile.basePitchHz);
+  if (window.updateVoiceBadge) window.updateVoiceBadge();
+  refreshSettingsVoiceControls();
+}
+
+function refreshSettingsVoiceControls() {
+  const cfg = window.getTTSConfig ? window.getTTSConfig() : {};
+  const edgeSel = document.getElementById('settings-edge-voice');
+  const kokoroSel = document.getElementById('settings-kokoro-voice');
+  if (edgeSel) populateSettingsSelect(edgeSel, EDGE_VOICES, cfg.edgeVoice || EDGE_VOICES[0]);
+  if (kokoroSel) populateSettingsSelect(kokoroSel, KOKORO_VOICES, cfg.kokoroVoice || KOKORO_VOICES[0]);
+}
+
+function populateSettingsSelect(sel, options, current) {
+  if (!sel) return;
+  sel.innerHTML = options
+    .map((v) => `<option value="${v}"${v === current ? ' selected' : ''}>${v}</option>`)
+    .join('');
+}
+
+function renderSettingsRoomGrid() {
+  const grid = document.getElementById('settings-room-grid');
+  if (!grid) return;
+  const roomName = (id) => (UNLOCK_ROOMS[id] ? UNLOCK_ROOMS[id].name : id[0].toUpperCase() + id.slice(1));
+  const rooms = [
+    { id: 'default', name: 'Default' },
+    ...getAvailableRooms().map((id) => ({ id, name: roomName(id) })),
+  ];
+  grid.innerHTML = rooms
+    .map(
+      (r) =>
+        `<button type="button" class="settings-grid-item" data-room="${r.id}">
+          <span>${r.name}</span>
+        </button>`
+    )
+    .join('');
+  grid.querySelectorAll('.settings-grid-item').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.room === (currentRoom || 'default'));
+    btn.addEventListener('click', () => {
+      setRoomByName(btn.dataset.room);
+      grid.querySelectorAll('.settings-grid-item').forEach((b) =>
+        b.classList.toggle('active', b.dataset.room === (currentRoom || 'default'))
+      );
+    });
+  });
+}
+
+// Loads a model, swaps it into the stage, and applies its profile (persona
+// id, name, TTS voice + base pitch). Shared by the settings grid and the
+// top-right character switcher. Returns true on success.
+async function switchToModel(url) {
+  const profile = getProfileForModel(url);
+  try {
+    localStorage.setItem('selectedModelUrl', url);
+    setDialogue('...A new me? Give me a second to shift into this form.');
+    const newModel = await loadModel(url);
+    if (waifuModel) {
+      app.stage.removeChild(waifuModel);
+      try { waifuModel.destroy(); } catch (e) { /* ignore */ }
+    }
+    waifuModel = newModel;
+    modelFitted = false;
+    wireLive2DModel(waifuModel);
+    if (fitModel(waifuModel)) modelFitted = true;
+    syncRoomModelFit();
+    applyModelProfile(profile);
+    setDialogue(profile ? profile.switchLine : "...Hmph. A different me now? Don't get used to it.");
+    return true;
+  } catch (err) {
+    console.warn('[waifu] model switch failed', err);
+    localStorage.removeItem('selectedModelUrl');
+    setDialogue("...Hmph. That form won't load. Keep me as I am.");
+    return false;
+  }
+}
+
+function renderSettingsModelGrid() {
+  const grid = document.getElementById('settings-model-grid');
+  if (!grid) return;
+  const selected = localStorage.getItem('selectedModelUrl') || (currentProfile && currentProfile.modelUrl) || MODEL_PROFILES[0].modelUrl;
+  grid.innerHTML = MODEL_PROFILES.map(
+    (m) =>
+      `<button type="button" class="settings-grid-item" data-model="${m.modelUrl}">
+        ${m.thumb ? `<img class="grid-thumb" src="${m.thumb}" alt="">` : '<span class="grid-thumb"></span>'}
+        <span class="grid-name">${m.name}</span>
+        <em class="grid-persona">${m.tagline}</em>
+      </button>`
+  ).join('');
+  grid.querySelectorAll('.settings-grid-item').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.model === selected);
+    btn.addEventListener('click', async () => {
+      const url = btn.dataset.model;
+      if (!url) return;
+      const ok = await switchToModel(url);
+      grid.querySelectorAll('.settings-grid-item').forEach((b) =>
+        b.classList.toggle('active', b.dataset.model === url && ok)
+      );
+    });
+  });
+}
+
+// Settings > Memory: lists what the companion currently remembers (from the
+// /api/memory endpoint) with a button to clear it all.
+async function renderSettingsMemory() {
+  const list = document.getElementById('settings-memory-list');
+  const empty = document.getElementById('settings-memory-empty');
+  if (!list) return;
+  list.innerHTML = '';
+  let memory = [];
+  try {
+    const res = await fetch('/api/memory');
+    if (res.ok) {
+      const data = await res.json();
+      memory = data.memory || [];
+    }
+  } catch (err) {
+    memory = [];
+  }
+
+  if (memory.length === 0) {
+    if (empty) empty.hidden = false;
+    return;
+  }
+  if (empty) empty.hidden = true;
+  memory.forEach((fact) => {
+    const li = document.createElement('div');
+    li.className = 'memory-fact';
+    li.innerHTML = `<span class="memory-label">${fact.label}</span><span class="memory-value"></span>`;
+    li.querySelector('.memory-value').textContent = fact.value;
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'memory-remove';
+    del.title = 'Forget this';
+    del.textContent = '×';
+    del.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      del.disabled = true;
+      await fetch(`/api/memory/${encodeURIComponent(fact.label)}`, { method: 'DELETE' });
+      renderSettingsMemory();
+    });
+    li.appendChild(del);
+    list.appendChild(li);
+  });
+}
+
+// Top-right character switcher (always visible, mirrors the room switcher
+// pattern). Selecting a character loads its model + profile just like the
+// settings grid does.
+function setupModelSwitcher() {
+  const trigger = document.getElementById('model-trigger');
+  const menu = document.getElementById('model-menu');
+  const label = document.getElementById('model-current');
+  const thumb = document.getElementById('model-current-thumb');
+  if (!trigger || !menu) return;
+
+  const render = () => {
+    const selected = localStorage.getItem('selectedModelUrl') || (currentProfile && currentProfile.modelUrl) || MODEL_PROFILES[0].modelUrl;
+    menu.innerHTML = MODEL_PROFILES.map((m) => {
+      const style = m.thumb ? ` style="--thumb: url('${m.thumb}')"` : '';
+      return `<button type="button" class="model-option" data-model="${m.modelUrl}"${style}>
+        <span class="model-thumb"></span>
+        <span><span class="model-opt-name">${m.name}</span><span class="model-opt-tag">${m.tagline}</span></span>
+      </button>`;
+    }).join('');
+    menu.querySelectorAll('.model-option').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.model === selected);
+      btn.addEventListener('click', async () => {
+        const url = btn.dataset.model;
+        if (!url || url === selected) { toggle(false); return; }
+        setBusy(true);
+        toggle(false);
+        await switchToModel(url);
+        syncLabel();
+        setBusy(false);
+      });
+    });
+  };
+
+  const syncLabel = () => {
+    const selected = localStorage.getItem('selectedModelUrl') || '';
+    const profile = getProfileForModel(selected) || MODEL_PROFILES[0];
+    if (label) label.textContent = profile.name;
+    if (thumb) {
+      if (profile.thumb) thumb.style.setProperty('--thumb', `url('${profile.thumb}')`);
+      else thumb.style.removeProperty('--thumb');
+    }
+  };
+
+  const toggle = (open) => {
+    menu.hidden = !open;
+    trigger.classList.toggle('open', open);
+  };
+
+  let busy = false;
+  const setBusy = (b) => {
+    busy = b;
+    trigger.disabled = b;
+    trigger.classList.toggle('loading', b);
+    label.textContent = b ? 'Loading…' : (currentProfile ? currentProfile.name : MODEL_PROFILES[0].name);
+    menu.querySelectorAll('.model-option').forEach((o) => o.toggleAttribute('disabled', b));
+  };
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (busy) return;
+    render();
+    toggle(menu.hidden);
+  });
+
+  menu.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', () => { if (!busy) toggle(false); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !busy) toggle(false);
+  });
+
+  syncLabel();
+}
+
+// Wires the gift shop modal: open/close via the ✕ button, backdrop click, and
+// Escape, plus delegated buy clicks on the rendered gift cards.
+function setupGiftShop() {
+  const modal = document.getElementById('gift-shop-modal');
+  if (!modal) return;
+  const closeBtn = document.getElementById('gift-shop-close');
+  const backdrop = document.getElementById('gift-shop-backdrop');
+  const grid = document.getElementById('gift-shop-grid');
+
+  if (closeBtn) closeBtn.addEventListener('click', closeGiftShop);
+  if (backdrop) backdrop.addEventListener('click', closeGiftShop);
+  if (grid) {
+    grid.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-gift]');
+      if (btn && !btn.disabled) buyGift(btn.dataset.gift);
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal && !modal.hidden) closeGiftShop();
+  });
+}
+
+function setupSettingsPanel() {
+  const modal = document.getElementById('settings-modal');
+  const gear = document.getElementById('settings-gear');
+  const closeBtn = document.getElementById('settings-close');
+  if (!modal || !gear) return;
+
+  const cfg = window.getTTSConfig ? window.getTTSConfig() : {};
+
+  const edgeSel = document.getElementById('settings-edge-voice');
+  const kokoroSel = document.getElementById('settings-kokoro-voice');
+  const speedInput = document.getElementById('settings-speed');
+  const pitchInput = document.getElementById('settings-pitch');
+  const muteInput = document.getElementById('settings-mute');
+  const speedVal = document.getElementById('settings-speed-val');
+  const pitchVal = document.getElementById('settings-pitch-val');
+
+  populateSettingsSelect(edgeSel, EDGE_VOICES, cfg.edgeVoice || EDGE_VOICES[0]);
+  populateSettingsSelect(kokoroSel, KOKORO_VOICES, cfg.kokoroVoice || KOKORO_VOICES[0]);
+  if (speedInput) {
+    speedInput.value = cfg.speed || 1.0;
+    speedVal.textContent = (cfg.speed || 1.0).toFixed(2) + 'x';
+  }
+  if (pitchInput) {
+    pitchInput.value = cfg.pitchHz || 0;
+    pitchVal.textContent = (cfg.pitchHz || 0) >= 0 ? `+${cfg.pitchHz || 0}Hz` : `${cfg.pitchHz || 0}Hz`;
+  }
+  if (muteInput) muteInput.checked = !!cfg.muted;
+
+  const toggle = (open) => {
+    modal.classList.toggle('is-visible', open);
+    if (open) {
+      renderSettingsRoomGrid();
+      renderSettingsModelGrid();
+      renderSettingsMemory();
+    }
+  };
+
+  gear.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggle(!modal.classList.contains('is-visible'));
+  });
+  if (closeBtn) closeBtn.addEventListener('click', () => toggle(false));
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) toggle(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.classList.contains('is-visible')) toggle(false);
+  });
+
+  if (edgeSel) {
+    edgeSel.addEventListener('change', () => {
+      if (window.saveTTSConfig) {
+        window.saveTTSConfig({ edgeVoice: edgeSel.value });
+        window.isEdgeReady = false;
+        updateVoiceBadge();
+      }
+    });
+  }
+  if (kokoroSel) {
+    kokoroSel.addEventListener('change', () => {
+      if (window.saveTTSConfig) window.saveTTSConfig({ kokoroVoice: kokoroSel.value });
+    });
+  }
+  if (speedInput) {
+    speedInput.addEventListener('input', () => {
+      const v = Number(speedInput.value);
+      speedVal.textContent = v.toFixed(2) + 'x';
+      if (window.saveTTSConfig) window.saveTTSConfig({ speed: v });
+    });
+  }
+  if (pitchInput) {
+    pitchInput.addEventListener('input', () => {
+      const v = Number(pitchInput.value);
+      pitchVal.textContent = v >= 0 ? `+${v}Hz` : `${v}Hz`;
+      if (window.saveTTSConfig) window.saveTTSConfig({ pitchHz: v });
+    });
+  }
+  if (muteInput) {
+    muteInput.addEventListener('change', () => {
+      if (window.saveTTSConfig) {
+        window.saveTTSConfig({ muted: muteInput.checked });
+        if (window.stopAudioBuffer) window.stopAudioBuffer();
+      }
+    });
+  }
 }
 
 // ---- Conversation backlog (hidden log, VN-style) ----
@@ -968,6 +1589,104 @@ function tierLevelFor(score) {
   return 0;
 }
 
+// ---- Affection tier unlockables ----
+// Crossing a tier fires a one-time unlock (persisted in localStorage) so
+// progression survives reloads. Level 2 also unlocks the Sunset Rooftop room.
+const TIER_UNLOCK_LINES = {
+  yuki: {
+    1: "Hmph. Don't read into this... I'm just in a decent mood, that's all.",
+    2: "W-Whoa... my heart is beating so fast, you idiot!",
+    3: "...I think I actually trust you now. Don't waste that.",
+  },
+  mark: {
+    1: "Ayy, we're really vibin' now, my friend!",
+    2: "Yo, this friendship's getting legendary!",
+    3: "Man... you're genuinely one of the best people I know.",
+  },
+};
+
+// ---- Name calling ----
+// If the companion remembers the user's name (from the backend memory store),
+// boot greetings and tier lines can address them by name. `{name}` placeholders
+// in dialogue strings are replaced by this helper.
+let userName = '';
+function withName(line) {
+  if (!line) return line;
+  return line.replaceAll('{name}', userName || 'you');
+}
+
+// Pull the user's remembered name out of the backend memory store. Non-fatal
+// on failure — the companion just greets anonymously.
+async function loadUserName() {
+  try {
+    const res = await fetch('/api/memory', { headers: { 'ngrok-skip-browser-warning': '1' } });
+    if (!res.ok) return;
+    const data = await res.json();
+    const facts = data.memory || [];
+    const fact = facts.find((f) => f.label === "the user's name");
+    if (fact && typeof fact.value === 'string' && fact.value.trim()) {
+      userName = fact.value.trim();
+    }
+  } catch (err) {
+    userName = '';
+  }
+}
+
+// Personalised boot greeting: uses the remembered name when we have one.
+function getBootGreeting() {
+  const id = currentProfile && currentProfile.id;
+  if (userName) {
+    if (id === 'mark') return `Yo, {name}! Good to see you, my friend!`;
+    return `...Oh. {name}. You're back. Don't just stand there, idiot.`;
+  }
+  if (id === 'mark') return `Yo! Good to see you, my friend!`;
+  return "...Oh. You're here. Don't just stand there, idiot.";
+}
+
+const TIER_UNLOCK_CARDS = {
+  2: {
+    title: 'Unlocked: Sunset Rooftop',
+    text: 'A warm, orange-lit corner of the rooftop just for the two of you. Find it in the room switcher.',
+  },
+  3: {
+    title: 'A Quiet Confession',
+    text: 'She looks at you a little differently now. You can feel it.',
+  },
+};
+
+function handleTierUnlock(level) {
+  const tiers = getUnlockedTiers();
+  const isNew = !tiers.includes(level);
+  unlockTier(level);
+  if (!isNew) return;
+
+  const lines = TIER_UNLOCK_LINES[currentProfile && currentProfile.id] || TIER_UNLOCK_LINES.yuki;
+  if (lines[level]) setDialogue(withName(lines[level]));
+
+  const card = TIER_UNLOCK_CARDS[level];
+  if (card) showUnlockCard(card.title, card.text);
+
+  // A newly unlocked room should appear in the dropdown + settings grid now.
+  if (window.__refreshRoomOptions) window.__refreshRoomOptions();
+  renderSettingsRoomGrid();
+}
+
+function showUnlockCard(title, text) {
+  const old = document.getElementById('unlock-card');
+  if (old) old.remove();
+
+  const card = document.createElement('div');
+  card.id = 'unlock-card';
+  card.innerHTML = `<strong>${title}</strong><span>${text}</span>`;
+  document.body.appendChild(card);
+  requestAnimationFrame(() => card.classList.add('visible'));
+
+  window.setTimeout(() => {
+    card.classList.remove('visible');
+    window.setTimeout(() => card.remove(), 500);
+  }, 6000);
+}
+
 function playSoundEffect(type) {
   let ctx = null;
   if (window.getTTSAudioContext) ctx = window.getTTSAudioContext();
@@ -1066,6 +1785,8 @@ let waifuModel = null;
 let lipSyncTimer = null;
 let modelFitted = false;
 let currentMouth = 0;
+let lipEnvLevel = 0; // smoothed RMS envelope for lip-sync
+let lipTimeData = null; // reusable Float32Array for analyser time-domain data
 let currentEmotion = 'neutral';
 let knownParams = null;
 let emotionResetTimer = null;
@@ -1101,7 +1822,7 @@ function setStatus(state) {
 let dialogueTypeTimer = null;
 
 function setDialogue(text) {
-  dialogueSpeaker.textContent = WAIFU_NAME;
+  dialogueSpeaker.textContent = currentProfile ? currentProfile.name : WAIFU_NAME;
   if (dialogueTypeTimer) {
     window.clearInterval(dialogueTypeTimer);
     dialogueTypeTimer = null;
@@ -1257,7 +1978,7 @@ function setWaifuEmotion(emotion) {
   console.log(`[waifu] emotion -> ${key}`);
 }
 
-// Emotion keyword -> bundled .exp3.json expression name. Only the Natori/Mark
+// Emotion keyword -> bundled .exp3.json expression name. Only the Mark
 // fallback models ship expression files; Hiyori has none, so the parameter
 // preset path below is the one that actually runs in practice.
 const EXPRESSION_FILE_MAP = {
@@ -1338,9 +2059,9 @@ function speakResponse(text, emotion, audioBuffer, opts = {}) {
     emotionResetTimer = null;
   }
 
-  // Emotion-reactive voice tuning: `getVoicePreset` lives in tts.js. Kokoro
-  // generation already used the preset's tempo; here we apply the preset's
-  // playback pitch and mirror it onto the browser-TTS fallback.
+  // Emotion-reactive voice tuning: `getVoicePreset` lives in tts.js. Edge's
+  // SSML already bakes in the preset's tempo + pitch; here we only mirror them
+  // onto the browser-TTS fallback so every engine keeps the same cadence.
   const preset = window.getVoicePreset ? window.getVoicePreset(emotion) : null;
 
   // Update the dialogue and switch the expression the moment her voice starts.
@@ -1349,16 +2070,19 @@ function speakResponse(text, emotion, audioBuffer, opts = {}) {
   if (!opts.skipDialogue) setDialogue(text);
   setYukiExpression(emotion);
 
-  // Kokoro path: audio-buffer playback drives the analyser lip-sync.
-  // When affection drops below 20 her voice is demon-possessed. The lower her
-  // affection, the more extreme the effect (pitch + crunch scale together).
+  // Real mute (settings panel): suppress ALL engines, including the browser
+  // speechSynthesis fallback — otherwise a muted TTS still "speaks" via the
+  // system voice whenever Edge/Kokoro return null.
+  const ttsCfg = window.getTTSConfig ? window.getTTSConfig() : null;
+  if (ttsCfg && ttsCfg.muted) {
+    emotionResetTimer = window.setTimeout(() => setYukiExpression('neutral'), 3000);
+    return;
+  }
+
+  // Audio-buffer path: playback drives the analyser lip-sync. Pitch/tempo are
+  // already baked into the generated audio (Edge SSML) — nothing to add here.
   if (audioBuffer && window.playAudioBuffer) {
-    const affection = window.currentAffection || 0;
-    const demonIntensity =
-      affection < 20 ? Math.min(1, Math.max(0.3, (20 - affection) / 40)) : 0;
     window.playAudioBuffer(audioBuffer, {
-      distort: demonIntensity,
-      pitch: preset ? preset.pitch : undefined,
       onEnd: () => {
         // Smoothly close her mouth (the ticker lerps it shut), then relax to neutral.
         emotionResetTimer = window.setTimeout(() => setYukiExpression('neutral'), 3000);
@@ -1409,17 +2133,24 @@ function playMotion(group, index, priority) {
 
 function fitModel(model) {
   const internal = model.internalModel || {};
-  const modelWidth = model.width || internal.width || 0;
-  const modelHeight = model.height || internal.height || 0;
+  // Use the RAW canvas size in model units (internal.width/height). pixi's
+  // model.width/height getters are multiplied by the current scale, so re-fitting
+  // an already-scaled model would blow the scale back up to ~1.0 (a 7000px-tall
+  // canvas then shows only its bottom sliver — "just shoes").
+  const modelWidth = internal.width || model.width || 0;
+  const modelHeight = internal.height || model.height || 0;
   const screenWidth = app.renderer.width;
   const screenHeight = app.renderer.height;
 
-  if (modelWidth && modelHeight) {
-    const scale = Math.min(screenWidth / modelWidth, screenHeight / modelHeight) * MODEL_FIT;
-    model.scale.set(scale);
-  } else {
-    model.scale.set(0.28);
+  if (!modelWidth || !modelHeight) {
+    // Canvas dims not ready yet (freshly loaded model). Leave the scale alone
+    // and return false so the ticker retries next frame instead of slamming the
+    // model to an arbitrary 0.28 (which would break the fit).
+    return false;
   }
+
+  const scale = Math.min(screenWidth / modelWidth, screenHeight / modelHeight) * MODEL_FIT;
+  model.scale.set(scale);
 
   model.anchor.set(0.5, 1.0);
 
@@ -1436,9 +2167,10 @@ function fitModel(model) {
     const glv = gl.getParameter(gl.VERSION);
     console.log(`[waifu] GL version: ${glv} (${glv.indexOf('2.0') >= 0 ? 'WEBGL2' : 'WEBGL1'})`);
   }
+  return true;
 }
 
-async function loadModel() {
+async function loadModel(overrideUrl) {
   // Safe extraction of Live2DModel from global PIXI or window scope
   const Live2DModel = window.PIXI?.live2d?.Live2DModel || window.PIXI_LIVE2D?.Live2DModel;
 
@@ -1446,8 +2178,9 @@ async function loadModel() {
     throw new Error("Live2D plugin is not properly initialized. Check script tags in index.html.");
   }
 
+  const urls = overrideUrl ? [overrideUrl] : MODEL_URLS;
   let lastError = null;
-  for (const url of MODEL_URLS) {
+  for (const url of urls) {
     try {
       const res = await fetch(url);
       const text = await res.text();
@@ -1479,6 +2212,8 @@ const CHAT_COMMANDS = [
   { cmd: '/stats', desc: 'Check her hidden vitals (incl. hunger) 📊' },
   { cmd: '/room', desc: 'Switch the backdrop (bedroom/classroom/library/rooftop) 🏠' },
   { cmd: '/lightmode', desc: 'Blast her with the light theme (war crime) 💡' },
+  { cmd: '/remember', desc: 'Show what she remembers about you 🧠' },
+  { cmd: '/forget', desc: 'Wipe her memory of you 🧠' },
   { cmd: '/clear', desc: 'Wipe the chat (memory wipe!) 🧹' },
   { cmd: '/help', desc: 'Show this menu 📖' },
 ];
@@ -1489,19 +2224,39 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+// Strips reasoning-model thinking blocks so internal monologue never reaches
+// the speech bubble or the TTS pipeline. Splits on the closing tag instead of
+// regex-matching across the block, so a truncated `<think>` (model ran out of
+// tokens mid-thought, no closing tag) is handled too. The `<think>` variants
+// also cover `<thinking>` since they share the prefix.
+function stripThinkingBlocks(text) {
+  const raw = String(text || '');
+  const afterClose = raw.split(/<\/think(?:ing)?>/i);
+  if (afterClose.length > 1) {
+    return afterClose[afterClose.length - 1].trim();
+  }
+  const beforeOpen = raw.split(/<think(?:ing)?>/i);
+  if (beforeOpen.length > 1) {
+    return beforeOpen[0].trim();
+  }
+  if (/^\s*thinking/.test(raw)) return '';
+  return raw.trim();
+}
+
 // Strips the deterministic [EMOTION: tag] prefix the LLM emits, maps "angry"
 // onto the frontend's "annoyed" parameter preset, and returns clean TTS text.
 function parseLLMResponse(rawText) {
+  const stripped = stripThinkingBlocks(rawText);
   const emotionRegex = /\[EMOTION:\s*(neutral|happy|blush|angry|surprised)\]\s*/i;
-  const match = rawText.match(emotionRegex);
+  const match = stripped.match(emotionRegex);
 
   let emotion = 'neutral';
-  let cleanDialogue = rawText;
+  let cleanDialogue = stripped;
 
   if (match) {
     emotion = match[1].toLowerCase();
     if (emotion === 'angry') emotion = 'annoyed';
-    cleanDialogue = rawText.replace(emotionRegex, '').trim();
+    cleanDialogue = stripped.replace(emotionRegex, '').trim();
   }
 
   // Strip any leftover bracketed tags (e.g. [blushes], [sighs]) so the TTS
@@ -1592,6 +2347,7 @@ function displayHelpMenu() {
           <ul>
             <li><code>/room</code> switches environments: <code>bedroom</code>, <code>classroom</code>, <code>library</code>, <code>rooftop</code> (or the 🏠 button).</li>
             <li><code>/stats</code> reveals her hidden vitals, session time, and heart progress.</li>
+            <li><code>/shop</code> (or the 🎁 dock button) spends your gacha money on gifts — each one earns a big heart boost.</li>
             <li>📜 in the corner opens the conversation log to re-read past lines.</li>
             <li>Shake your mouse violently... she gets dizzy. Opening DevTools is also a trap.</li>
           </ul>
@@ -1601,6 +2357,12 @@ function displayHelpMenu() {
   `;
   appendSystemMessage(helpHTML);
   // In VN mode there's no visible feed — pop the log open so the guide shows.
+  openBacklogModal();
+}
+
+// Pops the conversation log (backlog) open so a menu-style card rendered into
+// the chat feed is actually visible (the feed is hidden in VN mode).
+function openBacklogModal() {
   const modal = document.getElementById('backlog-modal');
   if (modal) modal.classList.add('is-visible');
 }
@@ -1787,6 +2549,10 @@ function handleChatCommand(raw) {
     attemptDance();
     return true;
   }
+  if (command === '/shop') {
+    openGiftShop();
+    return true;
+  }
   if (command === '/stats') {
     showStats();
     return true;
@@ -1811,11 +2577,54 @@ function handleChatCommand(raw) {
     appendSystemMessage('💡 Flipping on every light in the room...');
     return true;
   }
+  if (command === '/remember') {
+    showMemorySummary();
+    return true;
+  }
+  if (command === '/forget') {
+    forgetAllMemory();
+    return true;
+  }
   if (command === '/clear') {
     handleClearCommand();
     return true;
   }
   return false;
+}
+
+// /remember — lists the facts the companion has stored about you (from the
+// backend's persisted memory), shown as a system message in the chat feed.
+async function showMemorySummary() {
+  try {
+    const res = await fetch('/api/memory');
+    const data = res.ok ? await res.json() : { memory: [] };
+    const facts = data.memory || [];
+    if (facts.length === 0) {
+      appendSystemMessage("🧠 She doesn't remember anything about you yet. Tell her your name, birthday, or what you like.");
+      openBacklogModal();
+      return;
+    }
+    const list = facts.map((f) => `<li><strong>${escapeHtml(f.label)}</strong>: ${escapeHtml(f.value)}</li>`).join('');
+    appendSystemMessage(`🧠 Here's what she remembers about you:<ul class="memory-summary-list">${list}</ul>`);
+    openBacklogModal();
+  } catch (err) {
+    appendSystemMessage('🧠 Could not reach the memory system (backend offline?).');
+    openBacklogModal();
+  }
+}
+
+// /forget — wipes everything the companion remembers.
+async function forgetAllMemory() {
+  try {
+    const res = await fetch('/api/memory', { method: 'DELETE' });
+    if (res.ok) {
+      appendSystemMessage("🧠 Forgotten. She looks at you with a blank slate... but she'll warm up again.");
+    } else {
+      appendSystemMessage('🧠 Could not clear memory right now.');
+    }
+  } catch (err) {
+    appendSystemMessage('🧠 Could not reach the memory system (backend offline?).');
+  }
 }
 
 // /stats — a stylized JRPG character-profile card revealing her hidden vitals.
@@ -1870,6 +2679,8 @@ function showStats() {
   `;
 
   appendSystemMessage(statsHtml);
+  // Same as /help: pop the log open so the stats card is visible as a menu.
+  openBacklogModal();
 }
 
 // /clear — wipes the chat, but Yuki panics about "memory loss".
@@ -1897,6 +2708,70 @@ async function handleClearCommand() {
     }
   }
   speakResponse(text, 'annoyed', audioBuffer);
+}
+
+// Writes a line to the dialogue box immediately (no typewriter), used by the
+// streaming chat path where the backend already delivers text token-by-token.
+function setDialogueInstant(text) {
+  dialogueSpeaker.textContent = currentProfile ? currentProfile.name : WAIFU_NAME;
+  if (dialogueTypeTimer) {
+    window.clearInterval(dialogueTypeTimer);
+    dialogueTypeTimer = null;
+  }
+  dialogueText.textContent = text;
+}
+
+// Reads a /chat/stream SSE response: streams tokens into the dialogue box as
+// they arrive, then returns the final payload once the `done` event lands.
+async function readChatStream(response, message) {
+  if (!response.body) throw new Error('streaming body unavailable');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let visible = '';
+  let finalData = null;
+
+  const handleEvent = (raw) => {
+    const line = raw.trim();
+    if (!line.startsWith('data:')) return;
+    const payload = line.slice(5).trim();
+    if (!payload) return;
+    let data;
+    try {
+      data = JSON.parse(payload);
+    } catch (e) {
+      return;
+    }
+    if (typeof data.token === 'string') {
+      // Buffer tokens silently — never render them live. The cleaned final
+      // reply (post-parse, from the backend) is displayed only once the stream
+      // finishes, so raw reasoning / partial model output can't reach the UI.
+      visible += data.token;
+    } else if (data.done) {
+      // Final state event precedes the done marker when the stream succeeds.
+    } else if (data && typeof data.response === 'string') {
+      finalData = data;
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buffer.indexOf('\n\n')) !== -1) {
+      handleEvent(buffer.slice(0, idx));
+      buffer = buffer.slice(idx + 2);
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) handleEvent(buffer);
+
+  if (!finalData) {
+    // Stream ended without a final event (or fell back server-side).
+    finalData = { response: visible, emotion: 'neutral', affection_change: 0 };
+  }
+  return finalData;
 }
 
 async function sendMessage(raw) {
@@ -1927,56 +2802,75 @@ async function sendMessage(raw) {
   startSpeedrunTimer();
   turnCount += 1;
 
+  let data = null;
+  const persona = currentProfile ? currentProfile.personality : 'tsundere';
   try {
-    const res = await fetch(`${BACKEND_URL}/chat`, {
+    // Prefer the streaming SSE endpoint — tokens appear as she "speaks".
+    const res = await fetch(`${BACKEND_URL}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, persona }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const reply = (data && data.response) || '...I have nothing to say right now.';
-
-    // The backend already strips the [EMOTION: tag] and returns `emotion`, but
-    // re-run the parser as a safety net in case a tag ever leaks through.
-    const parsed = parseLLMResponse(reply);
-    const emotion = parsed.emotion !== 'neutral' ? parsed.emotion : (data && data.emotion) || 'neutral';
-    const cleanReply = parsed.cleanDialogue;
-    if (data && typeof data.total_affection === 'number') {
-      updateHeartHUD(data.total_affection, data.affection_change, data.combo_active);
-    }
-    setStatus('online');
-    appendBubble('waifu', cleanReply);
-
-    // Show the reply immediately — don't make her "respond" wait for TTS. The
-    // voice renders in the background and starts when it's ready.
-    setDialogue(cleanReply);
-
-    // Free the input right away so the user can keep chatting while the audio
-    // renders; playAudioBuffer cancels any previous source, so overlap is safe.
-    chatField.disabled = false;
-    sendBtn.disabled = false;
-
-    let audioBuffer = null;
-    if (window.generateTTSAudioBuffer && window.ttsReady) {
-      try {
-        audioBuffer = await window.generateTTSAudioBuffer(cleanReply, emotion);
-      } catch (e) {
-        console.warn('[waifu] kokoro generation failed, using browser TTS', e);
-      }
-    }
-    speakResponse(cleanReply, emotion, audioBuffer, { skipDialogue: true });
+    data = await readChatStream(res, message);
   } catch (err) {
-    console.error('[waifu] chat request failed', err);
-    setStatus('offline');
-    const fallback = "...Hmph. I can't hear you right now. Fix your end, dummy.";
-    appendBubble('waifu', fallback);
-    setDialogue(fallback);
-  } finally {
-    chatField.disabled = false;
-    sendBtn.disabled = false;
-    chatField.focus();
+    console.warn('[waifu] chat stream failed, falling back to /chat', err);
+    try {
+      const res = await fetch(`${BACKEND_URL}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, persona }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      data = await res.json();
+    } catch (err2) {
+      console.error('[waifu] chat request failed', err2);
+      setStatus('offline');
+      const fallback = "...Hmph. I can't hear you right now. Fix your end, dummy.";
+      appendBubble('waifu', fallback);
+      setDialogue(fallback);
+      chatField.disabled = false;
+      sendBtn.disabled = false;
+      chatField.focus();
+      return;
+    }
   }
+
+  const reply = (data && data.response) || '...I have nothing to say right now.';
+
+  // The backend already strips the [EMOTION: tag] and returns `emotion`, but
+  // re-run the parser as a safety net in case a tag ever leaks through.
+  const parsed = parseLLMResponse(reply);
+  const emotion = parsed.emotion !== 'neutral' ? parsed.emotion : (data && data.emotion) || 'neutral';
+  let cleanReply = parsed.cleanDialogue;
+  if (!cleanReply) {
+    cleanReply = "What? Stop staring at me like an idiot!";
+  }
+  if (data && typeof data.total_affection === 'number') {
+    updateHeartHUD(data.total_affection, data.affection_change, data.combo_active);
+  }
+  setStatus('online');
+  appendBubble('waifu', cleanReply);
+
+  // Show the reply immediately — don't make her "respond" wait for TTS. The
+  // voice renders in the background and starts when it's ready.
+  setDialogueInstant(cleanReply);
+
+  // Free the input right away so the user can keep chatting while the audio
+  // renders; playAudioBuffer cancels any previous source, so overlap is safe.
+  chatField.disabled = false;
+  sendBtn.disabled = false;
+
+  let audioBuffer = null;
+  if (window.generateTTSAudioBuffer && window.ttsReady) {
+    try {
+      audioBuffer = await window.generateTTSAudioBuffer(cleanReply, emotion);
+    } catch (e) {
+      console.warn('[waifu] kokoro generation failed, using browser TTS', e);
+    }
+  }
+  speakResponse(cleanReply, emotion, audioBuffer, { skipDialogue: true });
+  chatField.focus();
 }
 
 async function pingBackend() {
@@ -1987,6 +2881,23 @@ async function pingBackend() {
     console.warn('[waifu] backend unreachable', err);
     setStatus('offline');
   }
+}
+
+// Syncs the HUD with the backend's persisted affection on load so a page
+// refresh doesn't flash the default 20 while the server still holds e.g. 60.
+async function syncBackendState() {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/state`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data && typeof data.total_affection === 'number') {
+      updateHeartHUD(data.total_affection, 0, data.combo_active);
+      return true;
+    }
+  } catch (err) {
+    console.warn('[waifu] state sync failed', err);
+  }
+  return false;
 }
 
 // ---- Light Mode "Flashbang" Reaction ----
@@ -2325,6 +3236,106 @@ function setupCommandAutocomplete() {
   });
 }
 
+// Wires a freshly-loaded Live2D model into the app: adds it to the stage,
+// disables auto-motions, binds the emotion preset + root-translation zeroing,
+// speeds up gaze interpolation, and attaches the headpat/tap hit-testing.
+// Shared by init() and the settings model picker so swapped models behave the
+// same as the boot model.
+function wireLive2DModel(model) {
+  model.autoUpdate = false;
+  app.stage.addChild(model);
+
+  const mm = model.internalModel && model.internalModel.motionManager;
+  // Keep the library from auto-driving motions. Hiyori's Idle motions are very
+  // energetic, so we don't loop them; she rests on blink/breath/physics + a
+  // gentle bob, and only animates (TapBody) when tapped.
+  if (mm && 'autoInteract' in mm) mm.autoInteract = false;
+
+  // Apply the emotion preset right before the core model renders (after motions,
+  // breath, pose, etc. have been evaluated) so the expression can't be overwritten.
+  // Also zero root-translation params so no motion can float her off the floor.
+  model.internalModel.on('beforeModelUpdate', () => {
+    updateEmotionBeforeRender();
+    const core = model.internalModel.coreModel;
+    if (core && knownParams) {
+      for (const id of ['ParamX', 'ParamY', 'ParamZ']) {
+        if (knownParams[id] !== undefined && typeof core.setParameterValueById === 'function') {
+          core.setParameterValueById(id, 0);
+        }
+      }
+    }
+  });
+
+  // Speed up the built-in gaze interpolation (default is only 4*dt/1000 per frame).
+  const fc = model.internalModel.focusController;
+  if (fc && fc.targetX !== undefined) {
+    fc.update = function (dt) {
+      const k = Math.min(1, (FOCUS_SPEED * dt) / 1000);
+      this.x += (this.targetX - this.x) * k;
+      this.y += (this.targetY - this.y) * k;
+    };
+  }
+
+  // --- Interactive hit-testing: headpats & body taps ---
+  // Hiyori only registers a "Body" hit area, so we detect the tap zone by
+  // its position along the model's height (0 = top of head, 1 = feet).
+  model.interactive = true;
+  model.cursor = 'pointer';
+  model.on('pointerdown', (e) => {
+    if (window.__isSpeaking) return;
+    const now = Date.now();
+    if (now - lastTapTime < TAP_COOLDOWN_MS) return;
+    lastTapTime = now;
+
+    const local = e.data.getLocalPosition(model);
+    const h = model.internalModel.height || 1;
+    const ay = model.anchor ? model.anchor.y : 1;
+    const top = -ay * h;
+    const bottom = (1 - ay) * h;
+    const zone = (local.y - top) / (bottom - top);
+    const isHeadpat = zone < 0.35;
+
+    const isMark = currentProfile && currentProfile.id === 'mark';
+    const headpatPool = isMark ? MARK_HEADPAT_REACTIONS : HEADPAT_REACTIONS;
+    const bodyPool = isMark ? MARK_BODY_REACTIONS : BODY_REACTIONS;
+    const pool = isHeadpat ? headpatPool : bodyPool;
+    const reaction = pool[Math.floor(Math.random() * pool.length)];
+    console.log(`[waifu] tap zone=${zone.toFixed(2)} ${isHeadpat ? 'headpat' : 'body'} -> ${reaction.text}`);
+
+    // Animate her reaction: startled TapBody motion. Position stays locked to
+    // the floor via the ticker, so the motion can't make her float.
+    playMotion('TapBody', 0, 3);
+
+    // Headpats earn a small affection bonus (+1) so the interaction feels
+    // rewarding. Body taps stay neutral.
+    if (isHeadpat) {
+      setYukiExpression('happy');
+      fetch(`${BACKEND_URL}/adjust`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ delta: 1 }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data && typeof data.total_affection === 'number') {
+            updateHeartHUD(data.total_affection, data.affection_change);
+            spawnFloatingText('+1 \u2665', true);
+          }
+        })
+        .catch((err) => console.warn('[waifu] headpat affection failed', err));
+    } else {
+      setYukiExpression(reaction.emotion === 'blush' ? 'blush' : 'surprised');
+    }
+
+    setDialogue(reaction.text);
+    window.generateTTSAudioBuffer(reaction.text, reaction.emotion)
+      .then((buffer) => speakResponse(reaction.text, reaction.emotion, buffer))
+      .catch(() => speakResponse(reaction.text, reaction.emotion, null));
+  });
+
+  buildKnownParams();
+}
+
 async function init() {
   console.log(
     `[waifu] pixi=${PIXI.VERSION} | live2d-display=${(PIXI.live2d && PIXI.live2d.VERSION) || 'unknown'}`
@@ -2400,6 +3411,7 @@ async function init() {
     resetSpeedrunTimer();
     stopDizzyState();
     lastTierLevel = 0;
+    localStorage.removeItem(UNLOCK_STORAGE_KEY);
     victoryModal.classList.remove('visible');
     chatLog.innerHTML = '';
     gachaMoney = GACHA_STARTING_MONEY;
@@ -2425,7 +3437,10 @@ async function init() {
 
   setupLightModeDetection();
   setupRoomSwitcher();
+  setupModelSwitcher();
+  setupSettingsPanel();
   setupBacklog();
+  setupGiftShop();
   setupDevToolsTrap();
 
   if (!window.PIXI || !PIXI.live2d) {
@@ -2446,70 +3461,18 @@ async function init() {
   });
 
   try {
-    waifuModel = await loadModel();
-    waifuModel.autoUpdate = false;
-    app.stage.addChild(waifuModel);
+    // Always start fresh: Yuki + rooftop. Clears any previously persisted
+    // model choice so a reload never boots into a different character.
+    localStorage.removeItem('selectedModelUrl');
+    setRoomByName('rooftop');
+    applyModelProfile(MODEL_PROFILES[0]);
+
+    await loadUserName();
+    setDialogue(withName(getBootGreeting()));
+
+    waifuModel = await loadModel(MODEL_PROFILES[0].modelUrl);
+    wireLive2DModel(waifuModel);
     initSakuraParticles(app, 35);
-
-    const mm = waifuModel.internalModel && waifuModel.internalModel.motionManager;
-    // Keep the library from auto-driving motions. Hiyori's Idle motions are very
-    // energetic, so we don't loop them; she rests on blink/breath/physics + a
-    // gentle bob, and only animates (TapBody) when tapped.
-    if (mm && 'autoInteract' in mm) mm.autoInteract = false;
-
-    // Apply the emotion preset right before the core model renders (after motions,
-    // breath, pose, etc. have been evaluated) so the expression can't be overwritten.
-    // Also zero root-translation params so no motion can float her off the floor.
-    waifuModel.internalModel.on('beforeModelUpdate', () => {
-      updateEmotionBeforeRender();
-      const core = waifuModel.internalModel.coreModel;
-      if (core && knownParams) {
-        for (const id of ['ParamX', 'ParamY', 'ParamZ']) {
-          if (knownParams[id] !== undefined && typeof core.setParameterValueById === 'function') {
-            core.setParameterValueById(id, 0);
-          }
-        }
-      }
-    });
-
-    // Speed up the built-in gaze interpolation (default is only 4*dt/1000 per frame).
-    const fc = waifuModel.internalModel.focusController;
-    if (fc && fc.targetX !== undefined) {
-      fc.update = function (dt) {
-        const k = Math.min(1, (FOCUS_SPEED * dt) / 1000);
-        this.x += (this.targetX - this.x) * k;
-        this.y += (this.targetY - this.y) * k;
-      };
-    }
-
-    // --- Interactive hit-testing: headpats & body taps ---
-    // Hiyori only registers a "Body" hit area, so we detect the tap zone by
-    // its position along the model's height (0 = top of head, 1 = feet).
-    waifuModel.interactive = true;
-    waifuModel.cursor = 'pointer';
-    waifuModel.on('pointerdown', (e) => {
-      if (window.__isSpeaking) return;
-
-      const local = e.data.getLocalPosition(waifuModel);
-      const h = waifuModel.internalModel.height || 1;
-      const ay = waifuModel.anchor ? waifuModel.anchor.y : 1;
-      const top = -ay * h;
-      const bottom = (1 - ay) * h;
-      const zone = (local.y - top) / (bottom - top);
-
-      const pool = zone < 0.35 ? HEADPAT_REACTIONS : BODY_REACTIONS;
-      const reaction = pool[Math.floor(Math.random() * pool.length)];
-      console.log(`[waifu] tap zone=${zone.toFixed(2)} -> ${reaction.text}`);
-
-      // Animate her reaction: startled TapBody motion. Position stays locked to
-      // the floor via the ticker, so the motion can't make her float.
-      playMotion('TapBody', 0, 3);
-
-      setDialogue(reaction.text);
-      window.generateTTSAudioBuffer(reaction.text, reaction.emotion)
-        .then((buffer) => speakResponse(reaction.text, reaction.emotion, buffer))
-        .catch(() => speakResponse(reaction.text, reaction.emotion, null));
-    });
 
     const cm = waifuModel.internalModel && waifuModel.internalModel.coreModel;
     console.log(
@@ -2532,24 +3495,40 @@ async function init() {
       // deltaMS/16.667 (~1ms) made blink/breath/physics and the mouse gaze-follow
       // run ~17x slower — the "lag". Always pass the raw deltaMS.
       waifuModel.update(app.ticker.deltaMS);
-      if (!modelFitted) {
-        fitModel(waifuModel);
+      if (!modelFitted && fitModel(waifuModel)) {
         modelFitted = true;
         syncRoomModelFit();
       }
 
       if (window.__isAnalyserSpeaking && window.__lipAnalyser) {
         const analyser = window.__lipAnalyser;
-        const data = window.__lipData;
-        analyser.getByteFrequencyData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) sum += data[i];
-        const target = Math.min(1.0, (sum / data.length / 128) * LIP_SYNC_SENSITIVITY);
+        if (!lipTimeData || lipTimeData.length !== analyser.fftSize) {
+          lipTimeData = new Float32Array(analyser.fftSize);
+        }
+        // Time-domain RMS is far more speech-accurate than summing the whole
+        // frequency spectrum (which leans on bass rumble and background noise).
+        analyser.getFloatTimeDomainData(lipTimeData);
+        let sumSq = 0;
+        for (let i = 0; i < lipTimeData.length; i++) {
+          const s = lipTimeData[i];
+          sumSq += s * s;
+        }
+        const rms = Math.sqrt(sumSq / lipTimeData.length);
+
+        // Vocal envelope: fast attack on voice onset, slower release between
+        // syllables so the mouth doesn't flutter, plus a floor so near-silence
+        // reads as a closed mouth.
+        const rate = rms > lipEnvLevel ? LIP_SYNC_ATTACK : LIP_SYNC_RELEASE;
+        lipEnvLevel += (rms - lipEnvLevel) * rate;
+        if (lipEnvLevel < LIP_SYNC_FLOOR) lipEnvLevel = 0;
+
+        const target = Math.min(1.0, (lipEnvLevel / 0.15) * LIP_SYNC_SENSITIVITY);
         currentMouth += (target - currentMouth) * LIP_SYNC_LERP;
         setMouth(currentMouth);
       } else if (!window.__isSpeaking && currentMouth > 0) {
         // Glide the mouth shut after speech ends instead of snapping.
         currentMouth += (0 - currentMouth) * LIP_SYNC_LERP;
+        lipEnvLevel = 0;
         setMouth(currentMouth);
       }
 
@@ -2612,6 +3591,7 @@ async function init() {
   }
 
   pingBackend();
+  syncBackendState();
 }
 
 init();
